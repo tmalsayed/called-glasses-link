@@ -57,7 +57,7 @@
     var LOCAL = /^(127\.0\.0\.1|localhost)$/.test(location.hostname);
     var RELAY = LOCAL ? 'http://127.0.0.1:8791/devlink/api/' : 'https://monitor.protaha.com/devlink/api/';
     var PUB = LOCAL ? 'http://127.0.0.1:8766/pub/' : 'https://monitor.protaha.com/devlink/pub/';
-    var SALT = 'glasses-devlink-v2', ITER = 200000, NWORDS = 9;
+    var SALT = 'glasses-devlink-v2', ITER = 200000, NWORDS = 10;
     var TARGETS = [{ id: 'hermes', name: 'hermes' }, { id: 'glasses-dev', name: 'glasses-dev' }];
 
     var bodyEl = document.getElementById('body'), stateEl = document.getElementById('state'),
@@ -153,12 +153,18 @@
       return d[a.length][b.length];
     }
     var WSET = {}; WORDS.forEach(function (w) { WSET[w] = 1; });
-    function snap(raw) {
-      return raw.toLowerCase().split(/[^a-z]+/).filter(Boolean).map(function (w) {
-        if (WSET[w]) return w;
-        var best = null, bd = 9; WORDS.forEach(function (x) { var dd = dist(w, x); if (dd < bd) { bd = dd; best = x; } });
-        return bd <= 1 ? best : '?' + w;
-      });
+    function snap(raw) {                                   // case never matters: "Rabbit" = "rabbit"
+      var t = raw.toLowerCase().split(/[^a-z]+/).filter(Boolean), out = [];
+      for (var i = 0; i < t.length; i++) {
+        if (i + 1 < t.length && !WSET[t[i]] && WSET[t[i] + t[i + 1]]) { out.push(t[i] + t[i + 1]); i++; continue; }   // "sun flower"
+        var w = t[i];
+        if (WSET[w]) { out.push(w); continue; }
+        if (/s$/.test(w) && WSET[w.slice(0, -1)]) { out.push(w.slice(0, -1)); continue; }                            // "rabbits"
+        var best = null, bd = 9, ties = 0;
+        WORDS.forEach(function (x) { var dd = dist(w, x); if (dd < bd) { bd = dd; best = x; ties = 1; } else if (dd === bd) ties++; });
+        out.push((bd <= 1 || (bd === 2 && w.length >= 6 && ties === 1)) ? best : '?' + w);
+      }
+      return out;
     }
 
     // ---- speech to text ----
@@ -218,7 +224,7 @@
         var g = el('words');
         for (var i = 0; i < NWORDS; i++) { var sp = document.createElement('span'); var w = S.words[i]; sp.textContent = w ? w.replace(/^\?/, '') : (i + 1); sp.className = !w ? 'empty' : (w[0] === '?' ? 'bad' : ''); g.appendChild(sp); }
         bodyEl.appendChild(g);
-        if (S.listening) bodyEl.appendChild(bubble('listening', 'Listening…', S.draft || '…'));
+        if (S.listening) bodyEl.appendChild(bubble('listening', 'Listening…', (S.draft || '…').toLowerCase()));
         var ready = S.words.length === NWORDS && S.words.every(function (x) { return x[0] !== '?'; });
         helpEl.textContent = ready ? 'Pinch = pair · ◀ = clear' : 'Pinch = say words · ◀ = remove last';
         return;
@@ -334,7 +340,7 @@
         if (k === 'Enter') listen(function (said) {
           var got = snap(said); S.words = S.words.concat(got).slice(0, NWORDS);
           var bad = S.words.filter(function (x) { return x[0] === '?'; }).length;
-          S.msg = !said ? "Didn't catch that." : bad ? bad + ' word(s) not recognised (red). Swipe left to remove the last word.' : (S.words.length < NWORDS ? (NWORDS - S.words.length) + ' more word(s).' : 'All 9 words heard. Check them, then pinch.');
+          S.msg = !said ? "Didn't catch that." : bad ? bad + ' word(s) not recognised (red). Swipe left to remove the last word.' : (S.words.length < NWORDS ? (NWORDS - S.words.length) + ' more word(s).' : 'All ' + NWORDS + ' words heard. Check them, then pinch.');
           draw();
         });
         return;
