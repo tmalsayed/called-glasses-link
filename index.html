@@ -172,14 +172,40 @@
     function listen(done) {
       if (!SR) { S.msg = 'Speech to text is not available.'; draw(); return; }
       stopSpeaking();
-      var said = '', back = S.mode;
-      recog = new SR(); recog.lang = 'en-US'; recog.interimResults = true; recog.continuous = false;
-      S.listening = true; S.draft = ''; draw();
-      recog.onresult = function (ev) { said = ''; for (var i = 0; i < ev.results.length; i++) said += ev.results[i][0].transcript; S.draft = said; draw(); };
-      recog.onerror = function (ev) { S.msg = ev.error === 'no-speech' ? "Didn't catch that." : 'Mic error: ' + ev.error; };
-      recog.onend = function () { recog = null; S.listening = false; done(said.trim(), back); };
-      try { recog.start(); } catch (e) { recog = null; S.listening = false; S.msg = 'Mic busy, pinch again.'; draw(); }
+      // Keeps listening through pauses: the speech engine stops by itself after a short silence,
+      // so it is restarted and the text is kept, until Taha pinches (stopListening) or 3 minutes pass.
+      var kept = '', cur = '', back = S.mode, t0 = Date.now(), restarts = 0, fatal = false;
+      var MAX_MS = 180000, MAX_RESTARTS = 60;
+      function join(a, b) { a = a.trim(); b = b.trim(); return a && b ? a + ' ' + b : (a || b); }
+      listenStop = false; S.listening = true; S.draft = ''; draw();
+      function finish() {
+        recog = null; S.listening = false;
+        if (fatal) { draw(); return; }                       // keep the mic error on screen
+        if (!kept) S.msg = "Didn't catch that.";
+        done(kept, back);
+      }
+      function start() {
+        var r = new SR(); recog = r; r.lang = 'en-US'; r.interimResults = true; r.continuous = true;
+        r.onresult = function (ev) { cur = ''; for (var i = 0; i < ev.results.length; i++) cur += ev.results[i][0].transcript; S.draft = join(kept, cur); draw(); };
+        r.onerror = function (ev) {
+          if (ev.error === 'no-speech' || ev.error === 'aborted') return;
+          if (restarts > 0) { listenStop = true; return; }     // a restart was refused: keep what was heard, go on
+          fatal = true; S.msg = 'Mic error: ' + ev.error;
+        };
+        r.onend = function () {
+          kept = join(kept, cur); cur = '';
+          if (!listenStop && !fatal && Date.now() - t0 < MAX_MS && restarts < MAX_RESTARTS) {
+            restarts++;
+            try { start(); return; } catch (e) { /* fall through and finish */ }
+          }
+          finish();
+        };
+        r.start();
+      }
+      try { start(); } catch (e) { recog = null; S.listening = false; S.msg = 'Mic busy, pinch again.'; draw(); }
     }
+    var listenStop = false;
+    function stopListening() { listenStop = true; if (recog) { try { recog.stop(); } catch (x) {} } }
 
     // ---- replies (encrypted on the control box, decrypted here) ----
     function target() { return TARGETS[S.target]; }
@@ -224,7 +250,7 @@
         var g = el('words');
         for (var i = 0; i < NWORDS; i++) { var sp = document.createElement('span'); var w = S.words[i]; sp.textContent = w ? w.replace(/^\?/, '') : (i + 1); sp.className = !w ? 'empty' : (w[0] === '?' ? 'bad' : ''); g.appendChild(sp); }
         bodyEl.appendChild(g);
-        if (S.listening) bodyEl.appendChild(bubble('listening', 'Listening…', (S.draft || '…').toLowerCase()));
+        if (S.listening) bodyEl.appendChild(bubble('listening', 'Listening… (pinch to stop)', (S.draft || '…').toLowerCase()));
         var ready = S.words.length === NWORDS && S.words.every(function (x) { return x[0] !== '?'; });
         helpEl.textContent = ready ? 'Pinch = pair · ◀ = clear' : 'Pinch = say words · ◀ = remove last';
         return;
@@ -327,7 +353,7 @@
     document.addEventListener('keydown', function (e) {
       var k = e.key;
       if (S.busy) { e.preventDefault(); return; }
-      if (S.listening) { if (k === 'Enter' && recog) { e.preventDefault(); try { recog.stop(); } catch (x) {} } return; }
+      if (S.listening) { if (k === 'Enter') { e.preventDefault(); stopListening(); } return; }
       if (BACK[k]) {
         if (S.mode === 'chat' || S.mode === 'confirm') { e.preventDefault(); history.back(); }
         return;                                                   // elsewhere Back leaves the app
