@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="description" content="Talk to Claude sessions from Meta Ray-Ban Display glasses. Messages are signed on the glasses; replies are encrypted.">
+  <meta name="mrbd-web-app-capable" content="yes">
+  <meta name="robots" content="noindex, nofollow, noarchive">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://monitor.protaha.com; img-src data:; frame-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Glasses Link</title>
+  <link rel="icon" href="data:,">
+  <style>
+    :root { --bg:#000; --card:#1c1f2a; --text:#fff; --muted:#b8bccb; --busy:#ffb84d; --idle:#5ee08a; --focus:#ffd34d; --accent:#c08cff; --r:14px; }
+    * { margin:0; padding:0; box-sizing:border-box; }
+    html, body { width:100%; height:100%; }
+    body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--text); overflow:hidden; }
+    .screen { height:100%; display:flex; flex-direction:column; padding:22px; gap:12px; }
+    header { display:flex; justify-content:space-between; align-items:baseline; gap:12px; }
+    h1 { font-size:32px; }
+    #state { font-size:20px; color:var(--accent); font-variant-numeric:tabular-nums; }
+    #body { flex:1; min-height:0; overflow-y:scroll; scrollbar-width:none; display:flex; flex-direction:column; gap:10px; }
+    #body::-webkit-scrollbar { display:none; }
+    .row { display:flex; align-items:center; gap:14px; background:var(--card); border-radius:var(--r); padding:14px 18px; border:3px solid transparent; font-size:24px; font-weight:700; }
+    .row.on { border-color:var(--focus); }
+    .row .sub { margin-left:auto; font-size:18px; font-weight:400; color:var(--muted); }
+    .dot { width:18px; height:18px; border-radius:50%; background:#8a8fa0; flex:none; }
+    .busy .dot { background:var(--busy); } .idle .dot { background:var(--idle); }
+    .msg { flex:none; border-radius:var(--r); padding:10px 16px; font-size:21px; line-height:1.35; white-space:pre-line; }
+    .msg .who { display:block; font-size:16px; font-weight:700; margin-bottom:2px; letter-spacing:.04em; text-transform:uppercase; }
+    .msg.claude { background:var(--card); } .msg.claude .who { color:#36c8ff; }
+    .msg.you { background:#23415a; } .msg.you .who { color:var(--focus); }
+    .msg.working { background:transparent; border:2px dashed var(--busy); color:var(--busy); font-style:italic; }
+    .msg.listening { background:transparent; border:2px dashed #36c8ff; color:#36c8ff; }
+    .msg.ask { background:transparent; border:2px solid var(--focus); } .msg.ask .who { color:var(--focus); }
+    .note { font-size:22px; color:var(--muted); line-height:1.4; }
+    .big { font-size:24px; line-height:1.4; }
+    .words { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+    .words span { background:var(--card); border-radius:10px; padding:8px; text-align:center; font-size:22px; }
+    .words span.bad { color:#ff5c5c; } .words span.empty { color:#555; }
+    .pin { display:flex; gap:16px; justify-content:center; margin:10px 0; }
+    .pin span { width:64px; height:80px; border-radius:12px; background:var(--card); display:flex; align-items:center; justify-content:center; font-size:44px; font-weight:700; border:3px solid transparent; }
+    .pin span.on { border-color:var(--focus); }
+    .help { font-size:16px; color:var(--muted); text-align:center; }
+  </style>
+</head>
+<body>
+  <section class="screen">
+    <header><h1 id="title">Glasses Link</h1><span id="state"></span></header>
+    <div id="body"></div>
+    <div class="help" id="help"></div>
+  </section>
+  <script src="words.js"></script>
+  <script>
+  (function () {
+    'use strict';
+    // ---- configuration (no secrets here: this page is public) ----
+    var LOCAL = /^(127\.0\.0\.1|localhost)$/.test(location.hostname);
+    var RELAY = LOCAL ? 'http://127.0.0.1:8791/devlink/api/' : 'https://monitor.protaha.com/devlink/api/';
+    var PUB = LOCAL ? 'http://127.0.0.1:8766/pub/' : 'https://monitor.protaha.com/devlink/pub/';
+    var SALT = 'glasses-devlink-v2', ITER = 200000, NWORDS = 9;
+    var TARGETS = [{ id: 'hermes', name: 'hermes' }, { id: 'glasses-dev', name: 'glasses-dev' }];
+
+    var bodyEl = document.getElementById('body'), stateEl = document.getElementById('state'),
+        helpEl = document.getElementById('help'), titleEl = document.getElementById('title');
+    var enc = new TextEncoder();
+    var K = null;                 // { mac, enc } non-extractable CryptoKeys + device token
+    var S = { mode: 'boot', words: [], pin: [0, 0, 0, 0], at: 0, session: '', until: 0, target: 0, draft: '', msg: '',
+              busy: false, reply: {}, answered: {} };
+
+    // ---- small helpers ----
+    function el(cls, text) { var d = document.createElement('div'); d.className = cls; if (text !== undefined) d.textContent = text; return d; }
+    function hex(buf) { return Array.prototype.map.call(new Uint8Array(buf), function (b) { return ('0' + b.toString(16)).slice(-2); }).join(''); }
+    function b64(s) { var bin = atob(s), u = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; }
+    var tts = window.speechSynthesis || null, speaking = false;
+    function stopSpeaking() { if (tts) tts.cancel(); speaking = false; }
+    function say(text, short) {
+      if (!tts) return;
+      text = String(text).replace(/[*#`_>]/g, ' ').replace(/•/g, '. ').replace(/https?:\/\/\S+/g, 'link');
+      var parts = text.match(/[^.!?\n]+[.!?]*\s*/g) || [text], chunks = [], cur = '';
+      parts.forEach(function (p) { if ((cur + p).length > 220 && cur) { chunks.push(cur); cur = ''; } cur += p; });
+      if (cur.trim()) chunks.push(cur);
+      tts.cancel(); speaking = !short;
+      chunks.forEach(function (c, i) {
+        var u = new SpeechSynthesisUtterance(c.trim()); u.lang = 'en-US'; u.rate = 0.85;
+        if (i === chunks.length - 1) u.onend = function () { speaking = false; };
+        u.onerror = function () { speaking = false; };
+        tts.speak(u);
+      });
+    }
+
+    // ---- key storage: IndexedDB, keys are non-extractable ----
+    function db() {
+      return new Promise(function (res, rej) {
+        var r = indexedDB.open('glasses-link', 1);
+        r.onupgradeneeded = function () { r.result.createObjectStore('kv'); };
+        r.onsuccess = function () { res(r.result); }; r.onerror = function () { rej(r.error); };
+      });
+    }
+    function kvGet(k) { return db().then(function (d) { return new Promise(function (res) { var q = d.transaction('kv').objectStore('kv').get(k); q.onsuccess = function () { res(q.result); }; q.onerror = function () { res(undefined); }; }); }); }
+    function kvSet(k, v) { return db().then(function (d) { return new Promise(function (res, rej) { var t = d.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = res; t.onerror = function () { rej(t.error); }; }); }); }
+    function kvDel(k) { return db().then(function (d) { return new Promise(function (res) { var t = d.transaction('kv', 'readwrite'); t.objectStore('kv').delete(k); t.oncomplete = res; t.onerror = res; }); }); }
+
+    // ---- crypto: same as devlink2.py on the control box ----
+    function deriveAll(words) {
+      var phrase = words.join(' ').toLowerCase();
+      return crypto.subtle.importKey('raw', enc.encode(phrase), 'PBKDF2', false, ['deriveBits'])
+        .then(function (base) { return crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: enc.encode(SALT), iterations: ITER }, base, 256); })
+        .then(function (kbits) { return crypto.subtle.importKey('raw', kbits, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']); })
+        .then(function (master) {
+          var lab = function (l) { return crypto.subtle.sign('HMAC', master, enc.encode(l)); };
+          return Promise.all([lab('mac'), lab('enc'), lab('device')]);
+        })
+        .then(function (sub) {
+          return Promise.all([
+            crypto.subtle.importKey('raw', sub[0], { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']),
+            crypto.subtle.importKey('raw', sub[1], { name: 'AES-GCM' }, false, ['decrypt']),
+            hex(sub[2])
+          ]);
+        })
+        .then(function (k) { return { mac: k[0], enc: k[1], device: k[2] }; });
+    }
+    function signMsg(m) {
+      var canon = [m.target, m.kind, String(m.ctr), String(m.ts), m.text || ''].join('\n');
+      return crypto.subtle.sign('HMAC', K.mac, enc.encode(canon)).then(hex);
+    }
+    function decrypt(blob) {
+      return crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64(blob.iv), additionalData: enc.encode(SALT) }, K.enc, b64(blob.ct))
+        .then(function (pt) { return JSON.parse(new TextDecoder().decode(pt)); });
+    }
+    window.__glassesSelfTest = function (words, m) {      // for the local exam only (uses throwaway words)
+      return deriveAll(words).then(function (k) { var old = K; K = k; return signMsg(m).then(function (sig) { K = old; return { device: k.device, sig: sig }; }); });
+    };
+
+    // ---- relay ----
+    function api(path, body) {
+      body = body || {};
+      body.device = K && K.device;
+      if (S.session) body.session = S.session;
+      return fetch(RELAY + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), cache: 'no-store' })
+        .then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) { j._status = r.status; return j; }); });
+    }
+    function failed(j) {
+      if (j._status === 401 && /Not paired/.test(j.error || '')) { S.mode = 'pair'; S.words = []; S.session = ''; }
+      else if (j._status === 401) { S.session = ''; S.mode = 'pin'; S.pin = [0, 0, 0, 0]; S.at = 0; }
+      else if (j._status === 423) { S.mode = 'pair'; S.words = []; S.session = ''; }
+      S.msg = j.error || ('Error ' + j._status); draw();
+    }
+
+    // ---- words from speech: snap each to the nearest list word ----
+    function dist(a, b) {
+      var d = []; for (var i = 0; i <= a.length; i++) { d[i] = [i]; } for (var j = 1; j <= b.length; j++) d[0][j] = j;
+      for (i = 1; i <= a.length; i++) for (j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      return d[a.length][b.length];
+    }
+    var WSET = {}; WORDS.forEach(function (w) { WSET[w] = 1; });
+    function snap(raw) {
+      return raw.toLowerCase().split(/[^a-z]+/).filter(Boolean).map(function (w) {
+        if (WSET[w]) return w;
+        var best = null, bd = 9; WORDS.forEach(function (x) { var dd = dist(w, x); if (dd < bd) { bd = dd; best = x; } });
+        return bd <= 1 ? best : '?' + w;
+      });
+    }
+
+    // ---- speech to text ----
+    var SR = window.SpeechRecognition || window.webkitSpeechRecognition, recog = null;
+    function listen(done) {
+      if (!SR) { S.msg = 'Speech to text is not available.'; draw(); return; }
+      stopSpeaking();
+      var said = '', back = S.mode;
+      recog = new SR(); recog.lang = 'en-US'; recog.interimResults = true; recog.continuous = false;
+      S.listening = true; S.draft = ''; draw();
+      recog.onresult = function (ev) { said = ''; for (var i = 0; i < ev.results.length; i++) said += ev.results[i][0].transcript; S.draft = said; draw(); };
+      recog.onerror = function (ev) { S.msg = ev.error === 'no-speech' ? "Didn't catch that." : 'Mic error: ' + ev.error; };
+      recog.onend = function () { recog = null; S.listening = false; done(said.trim(), back); };
+      try { recog.start(); } catch (e) { recog = null; S.listening = false; S.msg = 'Mic busy, pinch again.'; draw(); }
+    }
+
+    // ---- replies (encrypted on the control box, decrypted here) ----
+    function target() { return TARGETS[S.target]; }
+    function poll() {
+      if (!K) return;
+      TARGETS.forEach(function (t) {
+        fetch(PUB + 'r-' + t.id + '.json?t=' + Date.now(), { cache: 'no-store' })
+          .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+          .then(decrypt)
+          .then(function (p) {
+            var old = S.reply[t.id], qOld = old && old.question;
+            S.reply[t.id] = p;
+            if (p.question !== qOld && p.question !== S.answered[t.id]) S.answered[t.id] = null;
+            if (S.mode === 'chat' || S.mode === 'home') draw();
+          })
+          .catch(function () {});
+      });
+    }
+    function question() {
+      var r = S.reply[target().id];
+      if (!r || !r.question || S.answered[target().id] === r.question) return '';
+      return r.question;
+    }
+
+    // ---- drawing ----
+    function pinBoxes() {
+      var w = el('pin');
+      S.pin.forEach(function (n, i) { var b = document.createElement('span'); if (i === S.at) { b.className = 'on'; b.textContent = n; } else b.textContent = i < S.at ? '•' : '–'; w.appendChild(b); });
+      return w;
+    }
+    function bubble(cls, who, text) { var b = el('msg ' + cls); b.appendChild(el('who', who)); b.appendChild(document.createTextNode(text)); return b; }
+    function draw() {
+      bodyEl.textContent = '';
+      var left = S.until ? Math.max(0, Math.round((S.until - Date.now()) / 60000)) : 0;
+      if ((S.mode === 'chat' || S.mode === 'home' || S.mode === 'confirm') && Date.now() >= S.until) { S.mode = 'pin'; S.session = ''; S.pin = [0, 0, 0, 0]; S.at = 0; S.msg = 'Session ended. Enter your PIN.'; }
+      if (S.msg) bodyEl.appendChild(el('note', S.msg));
+      titleEl.textContent = (S.mode === 'chat' || S.mode === 'confirm') ? target().name : 'Glasses Link';
+      if (S.mode === 'boot') { stateEl.textContent = ''; helpEl.textContent = ''; bodyEl.appendChild(el('note', 'Starting…')); return; }
+      if (S.mode === 'pair') {
+        stateEl.textContent = 'Not paired';
+        bodyEl.appendChild(el('big', 'Ask hermes for pairing words (they arrive in Telegram). At home, pinch and say them.'));
+        var g = el('words');
+        for (var i = 0; i < NWORDS; i++) { var sp = document.createElement('span'); var w = S.words[i]; sp.textContent = w ? w.replace(/^\?/, '') : (i + 1); sp.className = !w ? 'empty' : (w[0] === '?' ? 'bad' : ''); g.appendChild(sp); }
+        bodyEl.appendChild(g);
+        if (S.listening) bodyEl.appendChild(bubble('listening', 'Listening…', S.draft || '…'));
+        var ready = S.words.length === NWORDS && S.words.every(function (x) { return x[0] !== '?'; });
+        helpEl.textContent = ready ? 'Pinch = pair · ◀ = clear' : 'Pinch = say words · ◀ = remove last';
+        return;
+      }
+      if (S.mode === 'newpin' || S.mode === 'pin') {
+        stateEl.textContent = S.mode === 'newpin' ? 'Choose a PIN' : 'Locked';
+        bodyEl.appendChild(el('big', S.mode === 'newpin' ? 'Choose a 4-digit PIN.' : 'Enter your PIN.'));
+        bodyEl.appendChild(pinBoxes());
+        helpEl.textContent = '▲ ▼ digit · ▶ next · ◀ back · Pinch = done';
+        return;
+      }
+      if (S.mode === 'home') {
+        stateEl.textContent = left + ' min';
+        TARGETS.forEach(function (t, i) {
+          var r = S.reply[t.id] || {}, row = el('row ' + (r.status || ''));
+          if (i === S.target) row.classList.add('on');
+          row.appendChild(el('dot')); row.appendChild(document.createTextNode(t.name));
+          var sub = el('sub', r.question ? 'asks permission' : r.status === 'busy' ? 'working' : r.status === 'off' ? 'not running' : r.status ? 'ready' : '…');
+          row.appendChild(sub); bodyEl.appendChild(row);
+        });
+        helpEl.textContent = '▲ ▼ choose · Pinch = open';
+        return;
+      }
+      if (S.mode === 'confirm') {
+        stateEl.textContent = left + ' min';
+        bodyEl.appendChild(bubble('you', 'Send to ' + target().name + '?', S.draft));
+        helpEl.textContent = 'Pinch = SEND · ◀ = cancel';
+        return;
+      }
+      if (S.mode === 'chat') {
+        stateEl.textContent = left + ' min';
+        var r2 = S.reply[target().id];
+        if (!r2) bodyEl.appendChild(el('note', 'Loading replies…'));
+        else {
+          if (r2.status === 'off') bodyEl.appendChild(el('note', target().name + ' is not running.'));
+          (r2.messages || []).slice(-4).forEach(function (m) { bodyEl.appendChild(bubble(m.who === 'you' ? 'you' : 'claude', m.who === 'claude' ? target().name : m.who === 'you' ? 'You' : 'Other', m.text)); });
+        }
+        if (S.listening) bodyEl.appendChild(bubble('listening', 'Listening… (pinch to stop)', S.draft || '…'));
+        var q = question();
+        if (q && !S.listening) { bodyEl.appendChild(bubble('ask', target().name + ' asks permission', q)); helpEl.textContent = 'Pinch = YES · ◀ = no · ▲ ▼ scroll'; }
+        else {
+          if (r2 && r2.status === 'busy' && !S.listening) bodyEl.appendChild(el('msg working', '● ' + target().name + ' is working…'));
+          helpEl.textContent = S.listening ? 'Pinch = stop' : 'Pinch = speak · ▶ = read reply · Back = list';
+        }
+        var last = bodyEl.lastElementChild;
+        if (last) { var top = last.offsetTop - bodyEl.offsetTop; bodyEl.scrollTop = last.offsetHeight > bodyEl.clientHeight ? top : bodyEl.scrollHeight; }
+      }
+    }
+
+    // ---- actions ----
+    function send(kind, text) {
+      var now = Date.now();
+      var ctr = Math.max(now, (S.lastCtr || 0) + 1); S.lastCtr = ctr;
+      var m = { target: target().id, kind: kind, text: kind === 'text' ? text : '', ctr: ctr, ts: Math.floor(now / 1000) };
+      S.busy = true;
+      return kvSet('ctr', ctr).catch(function () {}).then(function () { return signMsg(m); }).then(function (sig) {
+        m.sig = sig; return api('v2/send', { msg: m });
+      }).then(function (j) {
+        S.busy = false;
+        if (!j.ok) { failed(j); return false; }
+        return true;
+      }).catch(function () { S.busy = false; S.msg = 'Cannot reach the link.'; draw(); return false; });
+    }
+    function readReply() {
+      if (speaking) { stopSpeaking(); S.msg = 'Stopped.'; draw(); return; }
+      var r = S.reply[target().id], text = '';
+      if (r && r.status === 'busy') { say(target().name + ' is still working.', true); S.msg = 'Still working · nothing read'; draw(); return; }
+      if (r) for (var i = r.messages.length - 1; i >= 0; i--) if (r.messages[i].who === 'claude') { text = r.messages[i].text; break; }
+      if (!text) { S.msg = 'No reply to read yet.'; draw(); return; }
+      S.msg = 'Reading · ▶ = stop'; draw(); say(text);
+    }
+    function pinDone() {
+      var pin = S.pin.join(''), first = S.mode === 'newpin';
+      S.busy = true; S.msg = 'Checking…'; draw();
+      (first ? api('v2/setpin', { pin: pin }) : Promise.resolve({ ok: true })).then(function (j) {
+        if (!j.ok) { S.busy = false; failed(j); return null; }
+        return api('v2/unlock', { pin: pin });
+      }).then(function (u) {
+        if (!u) return;
+        S.busy = false; S.pin = [0, 0, 0, 0]; S.at = 0;
+        if (!u.ok) { if (u._status === 403) { S.msg = u.error + ' Tries left: ' + u.left; draw(); } else failed(u); return; }
+        S.session = u.session; S.until = Date.now() + u.seconds * 1000; S.mode = 'home'; S.msg = ''; poll(); draw();
+      }).catch(function () { S.busy = false; S.msg = 'Cannot reach the link.'; draw(); });
+    }
+    function pairDone() {
+      S.busy = true; S.msg = 'Pairing… (a few seconds)'; draw();
+      var words = S.words.slice();
+      deriveAll(words).then(function (k) {
+        K = k; S.words = [];
+        return Promise.all([kvSet('mac', k.mac), kvSet('enc', k.enc), kvSet('device', k.device)]);
+      }).then(function () { return api('v2/hello'); }).then(function (j) {
+        S.busy = false;
+        if (!j.ok) { K = null; kvDel('device'); failed(j); S.msg = (j.error || 'Not accepted') + ' Check the words and try again.'; draw(); return; }
+        S.mode = j.pin ? 'pin' : 'newpin'; S.msg = 'Paired ✓ Now delete the words from Telegram.'; draw();
+      }).catch(function () { S.busy = false; S.msg = 'Pairing failed. Try again.'; draw(); });
+    }
+
+    var BACK = { Escape: 1, Backspace: 1, BrowserBack: 1, GoBack: 1 };
+    window.addEventListener('popstate', function () { if (S.mode === 'chat' || S.mode === 'confirm') { S.mode = 'home'; stopSpeaking(); draw(); } });
+    document.addEventListener('keydown', function (e) {
+      var k = e.key;
+      if (S.busy) { e.preventDefault(); return; }
+      if (S.listening) { if (k === 'Enter' && recog) { e.preventDefault(); try { recog.stop(); } catch (x) {} } return; }
+      if (BACK[k]) {
+        if (S.mode === 'chat' || S.mode === 'confirm') { e.preventDefault(); history.back(); }
+        return;                                                   // elsewhere Back leaves the app
+      }
+      e.preventDefault();
+      if (S.mode === 'pair') {
+        var ready = S.words.length === NWORDS && S.words.every(function (x) { return x[0] !== '?'; });
+        if (k === 'Enter' && ready) { pairDone(); return; }
+        if (k === 'ArrowLeft') { if (ready) S.words = []; else S.words.pop(); S.msg = ''; draw(); return; }
+        if (k === 'Enter') listen(function (said) {
+          var got = snap(said); S.words = S.words.concat(got).slice(0, NWORDS);
+          var bad = S.words.filter(function (x) { return x[0] === '?'; }).length;
+          S.msg = !said ? "Didn't catch that." : bad ? bad + ' word(s) not recognised (red). Swipe left to remove the last word.' : (S.words.length < NWORDS ? (NWORDS - S.words.length) + ' more word(s).' : 'All 9 words heard. Check them, then pinch.');
+          draw();
+        });
+        return;
+      }
+      if (S.mode === 'newpin' || S.mode === 'pin') {
+        if (k === 'ArrowUp') S.pin[S.at] = (S.pin[S.at] + 1) % 10;
+        else if (k === 'ArrowDown') S.pin[S.at] = (S.pin[S.at] + 9) % 10;
+        else if (k === 'ArrowRight') S.at = Math.min(3, S.at + 1);
+        else if (k === 'ArrowLeft') S.at = Math.max(0, S.at - 1);
+        else if (k === 'Enter') { if (S.at < 3) S.at++; else { pinDone(); return; } }
+        draw(); return;
+      }
+      if (S.mode === 'home') {
+        if (k === 'ArrowDown' || k === 'ArrowRight') S.target = (S.target + 1) % TARGETS.length;
+        else if (k === 'ArrowUp' || k === 'ArrowLeft') S.target = (S.target + TARGETS.length - 1) % TARGETS.length;
+        else if (k === 'Enter') { history.pushState({ v: 'chat' }, '', location.href); S.mode = 'chat'; S.msg = ''; poll(); }
+        draw(); return;
+      }
+      if (S.mode === 'confirm') {
+        if (k === 'ArrowLeft') { S.mode = 'chat'; S.draft = ''; S.msg = 'Cancelled.'; draw(); return; }
+        if (k === 'Enter') { stopSpeaking(); send('text', S.draft).then(function (ok) { if (ok) { S.mode = 'chat'; S.draft = ''; S.msg = 'Sent ✓'; say('Sent.', true); draw(); } }); }
+        return;
+      }
+      if (S.mode === 'chat') {
+        if (k === 'ArrowDown') { bodyEl.scrollTop += Math.round(bodyEl.clientHeight * 0.8); return; }
+        if (k === 'ArrowUp') { bodyEl.scrollTop -= Math.round(bodyEl.clientHeight * 0.8); return; }
+        if (k === 'ArrowRight') { readReply(); return; }
+        var q = question();
+        if (q && (k === 'Enter' || k === 'ArrowLeft')) {
+          var kind = k === 'Enter' ? 'approve' : 'deny', t = target().id;
+          send(kind, '').then(function (ok) { if (ok) { S.answered[t] = q; S.msg = kind === 'approve' ? 'Approved ✓' : 'Refused ✓'; draw(); } });
+          return;
+        }
+        if (k === 'Enter') listen(function (said) {
+          if (!said) { if (!S.msg) S.msg = "Didn't catch that."; draw(); return; }
+          S.draft = said; S.mode = 'confirm'; S.msg = ''; draw(); say('Send: ' + said + '?', true);
+        });
+      }
+    });
+
+    // ---- start ----
+    Promise.all([kvGet('mac'), kvGet('enc'), kvGet('device'), kvGet('ctr')]).then(function (v) {
+      if (v[0] && v[1] && v[2]) { K = { mac: v[0], enc: v[1], device: v[2] }; S.lastCtr = v[3] || 0; S.mode = 'pin'; }
+      else S.mode = 'pair';
+      draw();
+    }).catch(function () { S.mode = 'pair'; S.msg = 'Storage not available: pairing will not be remembered.'; draw(); });
+    setInterval(function () { if (S.mode === 'chat' || S.mode === 'home') poll(); }, 2500);
+    setInterval(function () { if (S.mode === 'chat' || S.mode === 'home' || S.mode === 'confirm') draw(); }, 30000);
+  })();
+  </script>
+</body>
+</html>
