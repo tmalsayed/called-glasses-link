@@ -216,16 +216,19 @@
       var kept = '', cur = '', back = S.mode, t0 = Date.now(), restarts = 0, fatal = false;
       var MAX_MS = 180000, MAX_RESTARTS = 60;
       function join(a, b) { a = a.trim(); b = b.trim(); return a && b ? a + ' ' + b : (a || b); }
-      listenStop = false; S.listening = true; S.draft = ''; S.staps = 0; draw();
+      var myId = ++listenId;
+      listenStop = false; listenCancel = false; S.listening = true; S.draft = ''; S.staps = 0; draw();
       function finish() {
+        if (myId !== listenId) return;                       // an old, cancelled session ending late: leave the new one alone
         recog = null; S.listening = false;
+        if (listenCancel) { S.draft = ''; draw(); return; }   // Back while listening: throw the words away
         if (fatal) { draw(); return; }                       // keep the mic error on screen
         if (!kept) S.msg = "Didn't catch that.";
         done(kept, back);
       }
       function start() {
         var r = new SR(); recog = r; r.lang = 'en-US'; r.interimResults = true; r.continuous = true;
-        r.onresult = function (ev) { cur = ''; for (var i = 0; i < ev.results.length; i++) cur += ev.results[i][0].transcript; S.draft = join(kept, cur); draw(); };
+        r.onresult = function (ev) { if (myId !== listenId || listenCancel) return; cur = ''; for (var i = 0; i < ev.results.length; i++) cur += ev.results[i][0].transcript; S.draft = join(kept, cur); draw(); };
         r.onerror = function (ev) {
           if (ev.error === 'no-speech' || ev.error === 'aborted') return;
           if (restarts > 0) { listenStop = true; return; }     // a restart was refused: keep what was heard, go on
@@ -233,7 +236,7 @@
         };
         r.onend = function () {
           kept = join(kept, cur); cur = '';
-          if (!listenStop && !fatal && Date.now() - t0 < MAX_MS && restarts < MAX_RESTARTS) {
+          if (myId === listenId && !listenStop && !fatal && Date.now() - t0 < MAX_MS && restarts < MAX_RESTARTS) {
             restarts++;
             try { start(); return; } catch (e) { /* fall through and finish */ }
           }
@@ -243,8 +246,15 @@
       }
       try { start(); } catch (e) { recog = null; S.listening = false; S.msg = 'Mic busy, pinch again.'; draw(); }
     }
-    var listenStop = false;
+    var listenStop = false, listenCancel = false, listenId = 0;
     function stopListening() { listenStop = true; if (recog) { try { recog.stop(); } catch (x) {} } }
+    function cancelListening() {                                // Back while listening: mic off, nothing kept, stay in the chat
+      listenCancel = true; listenStop = true; S.staps = 0;
+      if (recog) { try { recog.abort(); } catch (x) { try { recog.stop(); } catch (y) {} } }
+      S.listening = false; S.draft = '';
+      if (S.mode === 'confirm' || S.mode === 'chat') S.mode = 'chat';
+      S.msg = 'Stopped listening.'; draw();
+    }
 
     // ---- replies (encrypted on the control box, decrypted here) ----
     function target() { return TARGETS[S.target]; }
@@ -416,6 +426,7 @@
 
     var BACK = { Escape: 1, Backspace: 1, BrowserBack: 1, GoBack: 1 };
     window.addEventListener('popstate', function () {
+      if (S.listening) { cancelListening(); if (S.mode === 'chat') history.pushState({ v: 'chat' }, '', location.href); return; }
       if (S.mode === 'confirm') { cancelSend(); history.pushState({ v: 'chat' }, '', location.href); return; }   // Back on the send screen = cancel, stay in the chat
       if (S.mode === 'chat') { S.mode = 'home'; stopSpeaking(); draw(); }
     });
@@ -423,6 +434,7 @@
     document.addEventListener('keydown', function (e) {
       var k = e.key;
       if (S.busy) { e.preventDefault(); return; }
+      if (k === 'Enter' && (speaking || (tts && tts.speaking))) stopSpeaking();   // a pinch always silences the voice at once, so you hear it was received; it still counts
       if (S.listening) {
         if (k === 'Enter') {
           e.preventDefault();
@@ -432,6 +444,7 @@
           if (S.staps < 2) { S.msg = 'Pinch once more to stop'; draw(); return; }
           S.staps = 0; S.msg = ''; stopListening();
         }
+        else if (BACK[k]) { e.preventDefault(); cancelListening(); }
         return;
       }
       if (BACK[k]) {
