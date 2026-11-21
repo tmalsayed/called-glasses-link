@@ -33,6 +33,9 @@
     .msg img.thumb { display:block; margin-top:8px; max-width:100%; max-height:240px; border-radius:10px; }
     .msg.working { background:transparent; border:2px dashed var(--busy); color:var(--busy); font-style:italic; }
     .msg.listening { background:transparent; border:2px dashed #36c8ff; color:#36c8ff; }
+    .msg.reading { color:var(--muted); } .msg.reading .done { color:var(--muted); opacity:.7; }
+    .msg.reading .hl-s { color:var(--text); background:rgba(255,211,77,.16); border-radius:6px; }
+    .msg.reading .hl-w { background:var(--focus); color:#000; border-radius:4px; }
     .taps { font-size:30px; letter-spacing:.3em; text-align:center; color:var(--focus); margin:6px 0; }
     .msg.ask { background:transparent; border:2px solid var(--focus); } .msg.ask .who { color:var(--focus); }
     .note { font-size:22px; color:var(--muted); line-height:1.4; }
@@ -75,20 +78,53 @@
     function hex(buf) { return Array.prototype.map.call(new Uint8Array(buf), function (b) { return ('0' + b.toString(16)).slice(-2); }).join(''); }
     function b64(s) { var bin = atob(s), u = new Uint8Array(bin.length); for (var i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i); return u; }
     var tts = window.speechSynthesis || null, speaking = false;
-    function stopSpeaking() { if (tts) tts.cancel(); speaking = false; }
-    function say(text, short) {
+    // reading = what is being read aloud, so draw() can highlight the sentence (and word, if the voice reports words) and scroll to it
+    var reading = null;
+    function stopSpeaking() { if (tts) tts.cancel(); speaking = false; reading = null; }
+    function sentences(text) {                              // [start, end) of each sentence in the shown text
+      var re = /[^.!?\n]+[.!?]*\s*/g, out = [], m;
+      while ((m = re.exec(text))) if (m[0].trim()) out.push([m.index, m.index + m[0].length]);
+      return out.length ? out : [[0, text.length]];
+    }
+    function speakable(t) { return t.replace(/[*#`_>]/g, ' ').replace(/•/g, '. ').replace(/https?:\/\/\S+/g, 'link'); }
+    function say(text, short, follow) {
       if (!tts) return;
-      text = String(text).replace(/[*#`_>]/g, ' ').replace(/•/g, '. ').replace(/https?:\/\/\S+/g, 'link');
-      var parts = text.match(/[^.!?\n]+[.!?]*\s*/g) || [text], chunks = [], cur = '';
-      parts.forEach(function (p) { if ((cur + p).length > 220 && cur) { chunks.push(cur); cur = ''; } cur += p; });
-      if (cur.trim()) chunks.push(cur);
+      text = String(text);
+      var parts = sentences(text);
       tts.cancel(); speaking = !short;
-      chunks.forEach(function (c, i) {
-        var u = new SpeechSynthesisUtterance(c.trim()); u.lang = 'en-US'; u.rate = 0.85;
-        if (i === chunks.length - 1) u.onend = function () { speaking = false; };
-        u.onerror = function () { speaking = false; };
+      reading = follow ? { text: text, parts: parts, i: -1, w: null } : null;
+      var mine = reading;
+      parts.forEach(function (pp, i) {
+        var orig = text.slice(pp[0], pp[1]), spoken = speakable(orig).trim();
+        if (!spoken) return;
+        var lead = orig.length - orig.replace(/^\s+/, '').length;
+        var u = new SpeechSynthesisUtterance(spoken); u.lang = 'en-US'; u.rate = 0.85;
+        u.onstart = function () { if (reading === mine && mine) { mine.i = i; mine.w = null; draw(); } };
+        u.onboundary = function (ev) {                      // word highlight only when the spoken text lines up with the shown text
+          if (reading !== mine || !mine || ev.name !== 'word' || speakable(orig).trim().length !== orig.trim().length) return;
+          var a = pp[0] + lead + ev.charIndex, n = ev.charLength || ((spoken.slice(ev.charIndex).match(/^\S+/) || [''])[0].length);
+          mine.w = [a, a + n]; draw();
+        };
+        if (i === parts.length - 1) u.onend = function () { speaking = false; if (reading === mine) { reading = null; draw(); } };
+        u.onerror = function () { speaking = false; if (reading === mine) { reading = null; draw(); } };
         tts.speak(u);
       });
+    }
+    function readingBubble(who, text) {                     // the message being read: dim text, current sentence lit, current word marked
+      var b = el('msg claude reading'); b.appendChild(el('who', who));
+      var R = reading, at = 0;
+      R.parts.forEach(function (pp, i) {
+        if (pp[0] > at) b.appendChild(document.createTextNode(text.slice(at, pp[0])));
+        var sp = document.createElement('span'); sp.className = i === R.i ? 'hl-s' : (i < R.i ? 'done' : '');
+        if (i === R.i && R.w && R.w[0] >= pp[0] && R.w[1] <= pp[1]) {
+          sp.appendChild(document.createTextNode(text.slice(pp[0], R.w[0])));
+          var w = document.createElement('span'); w.className = 'hl-w'; w.textContent = text.slice(R.w[0], R.w[1]); sp.appendChild(w);
+          sp.appendChild(document.createTextNode(text.slice(R.w[1], pp[1])));
+        } else sp.textContent = text.slice(pp[0], pp[1]);
+        b.appendChild(sp); at = pp[1];
+      });
+      if (at < text.length) b.appendChild(document.createTextNode(text.slice(at)));
+      return b;
     }
 
     // ---- key storage: IndexedDB, keys are non-extractable ----
@@ -227,7 +263,7 @@
               if (S.heard === undefined) S.heard = last;
               else if (last && last !== S.heard) {
                 S.heard = last;
-                if (S.mode === 'chat' && target().id === t.id && !S.listening && p.status !== 'busy') { S.msg = 'Reading · ▶ = stop'; say(last); }
+                if (S.mode === 'chat' && target().id === t.id && !S.listening && p.status !== 'busy') { S.msg = 'Reading · ▶ = stop'; say(last, false, true); }
               }
             }
             if (p.question !== qOld && p.question !== S.answered[t.id]) S.answered[t.id] = null;
@@ -299,8 +335,10 @@
         if (!r2) bodyEl.appendChild(el('note', 'Loading replies…'));
         else {
           if (r2.status === 'off') bodyEl.appendChild(el('note', target().name + ' is not running.'));
-          (r2.messages || []).slice(-4).forEach(function (m) {
-            var b = bubble(m.who === 'you' ? 'you' : 'claude', m.who === 'claude' ? target().name : m.who === 'you' ? 'You' : 'Other', m.text);
+          var shown = (r2.messages || []).slice(-4), readAt = -1;
+          if (reading) for (var ri = shown.length - 1; ri >= 0; ri--) if (shown[ri].who === 'claude' && shown[ri].text === reading.text) { readAt = ri; break; }
+          shown.forEach(function (m, mi) {
+            var b = mi === readAt ? readingBubble(target().name, m.text) : bubble(m.who === 'you' ? 'you' : 'claude', m.who === 'claude' ? target().name : m.who === 'you' ? 'You' : 'Other', m.text);
             if (typeof m.thumb === 'string' && m.thumb.length < 90000 && /^[A-Za-z0-9+\/]+=*$/.test(m.thumb)) {
               var im = document.createElement('img'); im.className = 'thumb'; im.alt = 'image'; im.src = 'data:image/jpeg;base64,' + m.thumb;
               b.appendChild(im);
@@ -318,8 +356,13 @@
           }
           helpEl.textContent = S.listening ? 'Pinch = stop' : target().ask ? 'Pinch = ask · ▶ = read again · Back = list' : 'Pinch = speak · ▶ = read reply · Back = list';
         }
-        var last = bodyEl.lastElementChild;
-        if (last) { var top = last.offsetTop - bodyEl.offsetTop; bodyEl.scrollTop = last.offsetHeight > bodyEl.clientHeight ? top : bodyEl.scrollHeight; }
+        var hl = reading && (bodyEl.querySelector('.hl-w') || bodyEl.querySelector('.hl-s'));
+        if (hl) {                                                  // while reading: keep the words being read in the upper third
+          bodyEl.scrollTop = Math.max(0, hl.offsetTop - bodyEl.offsetTop - Math.round(bodyEl.clientHeight / 3));
+        } else {
+          var last = bodyEl.lastElementChild;
+          if (last) { var top = last.offsetTop - bodyEl.offsetTop; bodyEl.scrollTop = last.offsetHeight > bodyEl.clientHeight ? top : bodyEl.scrollHeight; }
+        }
       }
     }
 
@@ -343,7 +386,7 @@
       if (r && r.status === 'busy') { say(target().name + ' is still working.', true); S.msg = 'Still working · nothing read'; draw(); return; }
       if (r) for (var i = r.messages.length - 1; i >= 0; i--) if (r.messages[i].who === 'claude') { text = r.messages[i].text; break; }
       if (!text) { S.msg = 'No reply to read yet.'; draw(); return; }
-      S.msg = 'Reading · ▶ = stop'; draw(); say(text);
+      S.msg = 'Reading · ▶ = stop'; draw(); say(text, false, true);
     }
     function pinDone() {
       var pin = S.pin.join(''), first = S.mode === 'newpin';
