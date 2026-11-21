@@ -121,7 +121,7 @@
       if (document.activeElement && document.activeElement !== document.body && document.activeElement.blur) document.activeElement.blur();
     }
     window.addEventListener('blur', function () { if (music.frame) setTimeout(keepFocus, 0); });
-    function goWindow(dir) {                                    // swipe left/right inside a window: previous/next window, wrapping
+    function goWindow(dir) {                                    // swipe left inside a window: next window, wrapping
       var N = TARGETS.length + 1, pos = S.mode === 'music' ? TARGETS.length : S.target;
       pos = (pos + dir + N) % N;
       stopSpeaking(); S.ltaps = 0; S.msg = '';
@@ -328,7 +328,7 @@
               if (S.heard === undefined) S.heard = last;
               else if (last && last !== S.heard) {
                 S.heard = last;
-                if (S.mode === 'chat' && target().id === t.id && !S.listening && p.status !== 'busy') { S.msg = 'Reading · pinch = stop'; say(last, false, true); }
+                if (S.mode === 'chat' && target().id === t.id && !S.listening && p.status !== 'busy') { S.msg = 'Reading · ▶ or pinch = stop'; say(last, false, true); }
               }
             }
             if (p.question !== qOld && p.question !== S.answered[t.id]) S.answered[t.id] = null;
@@ -398,7 +398,7 @@
         bodyEl.appendChild(el('note', 'Arabic oud lo-fi · keeps playing while the app is open'));
         var vb = el('vol'); var fill = el('fill'); fill.style.width = music.level + '%'; vb.appendChild(fill); bodyEl.appendChild(vb);
         bodyEl.appendChild(el('note', 'Volume ' + music.level + ' %'));
-        helpEl.textContent = 'Pinch = play/stop · ▲ louder · ▼ softer · ◀ ▶ windows';
+        helpEl.textContent = 'Pinch = play/stop · ▲ louder · ▼ softer · ◀ = next window';
         return;
       }
       if (S.mode === 'confirm') {
@@ -427,13 +427,13 @@
         }
         if (S.listening) bodyEl.appendChild(bubble('listening', 'Listening… (pinch 2× to stop)', S.draft || '…'));
         var q = question();
-        if (q && !S.listening) { bodyEl.appendChild(bubble('ask', target().name + ' asks permission', q)); helpEl.textContent = 'Pinch = YES · ▼ = no · ◀ ▶ windows'; }
+        if (q && !S.listening) { bodyEl.appendChild(bubble('ask', target().name + ' asks permission', q)); helpEl.textContent = 'Pinch = YES · ▼ = no · ◀ = next window'; }
         else {
           if (r2 && r2.status === 'busy' && !S.listening) {
             bodyEl.appendChild(el('msg working', '● ' + target().name + (target().ask ? ' is thinking…' : ' is working…')));
             if (r2.progress && r2.progress.length) bodyEl.appendChild(el('msg progress', r2.progress.join('\n')));
           }
-          helpEl.textContent = S.listening ? 'Pinch 2× = stop' : (target().ask ? 'Pinch 2× = ask' : 'Pinch 2× = speak') + ' · ◀ ▶ windows · ▲ top = read again';
+          helpEl.textContent = S.listening ? 'Pinch 2× = stop' : (target().ask ? 'Pinch 2× = ask' : 'Pinch 2× = speak') + ' · ▶ = read · ◀ = next window';
         }
         var hl = reading && (bodyEl.querySelector('.hl-w') || bodyEl.querySelector('.hl-s'));
         if (hl) {                                                  // while reading: keep the words being read in the upper third
@@ -465,7 +465,7 @@
       if (r && r.status === 'busy') { say(target().name + ' is still working.', true); S.msg = 'Still working · nothing read'; draw(); return; }
       if (r) for (var i = r.messages.length - 1; i >= 0; i--) if (r.messages[i].who === 'claude') { text = r.messages[i].text; break; }
       if (!text) { S.msg = 'No reply to read yet.'; draw(); return; }
-      S.msg = 'Reading · pinch = stop'; draw(); say(text, false, true);
+      S.msg = 'Reading · ▶ or pinch = stop'; draw(); say(text, false, true);
     }
     function pinDone() {
       var pin = S.pin.join(''), first = S.mode === 'newpin';
@@ -547,7 +547,7 @@
         if (k === 'Enter') musicToggle();
         else if (k === 'ArrowUp') musicVol(10);
         else if (k === 'ArrowDown') musicVol(-10);
-        else if (k === 'ArrowRight' || k === 'ArrowLeft') { goWindow(k === 'ArrowRight' ? 1 : -1); return; }
+        else if (k === 'ArrowLeft') { goWindow(1); return; }
         draw(); return;
       }
       if (S.mode === 'home') {
@@ -579,7 +579,8 @@
         return;
       }
       if (S.mode === 'chat') {
-        if (k === 'ArrowRight' || k === 'ArrowLeft') { goWindow(k === 'ArrowRight' ? 1 : -1); return; }
+        if (k === 'ArrowLeft') { goWindow(1); return; }              // swipe left = next window
+        if (k === 'ArrowRight') { readReply(); return; }              // swipe right = read the reply (again = stop)
         var q = question();
         if (q && (k === 'Enter' || k === 'ArrowDown')) {
           var kind = k === 'Enter' ? 'approve' : 'deny', t = target().id;
@@ -587,10 +588,7 @@
           return;
         }
         if (k === 'ArrowDown') { bodyEl.scrollTop += Math.round(bodyEl.clientHeight * 0.8); return; }
-        if (k === 'ArrowUp') {                                   // ▲ scrolls up; at the top it reads the last reply again
-          if (bodyEl.scrollTop > 2) bodyEl.scrollTop -= Math.round(bodyEl.clientHeight * 0.8); else readReply();
-          return;
-        }
+        if (k === 'ArrowUp') { bodyEl.scrollTop -= Math.round(bodyEl.clientHeight * 0.8); return; }
         if (k === 'Enter') {
           var nowL = Date.now();
           S.ltaps = (S.ltaps && nowL - S.ltapAt < 4000) ? S.ltaps + 1 : 1; S.ltapAt = nowL;
