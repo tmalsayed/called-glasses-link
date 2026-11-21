@@ -29,6 +29,7 @@
     .msg .who { display:block; font-size:16px; font-weight:700; margin-bottom:2px; letter-spacing:.04em; text-transform:uppercase; }
     .msg.claude { background:var(--card); } .msg.claude .who { color:#36c8ff; }
     .msg.you { background:#23415a; } .msg.you .who { color:var(--focus); }
+    .msg.progress { background:transparent; border:1px solid var(--busy); color:var(--muted); font-family:ui-monospace,Menlo,monospace; font-size:16px; line-height:1.3; white-space:pre-wrap; word-break:break-word; }
     .msg.working { background:transparent; border:2px dashed var(--busy); color:var(--busy); font-style:italic; }
     .msg.listening { background:transparent; border:2px dashed #36c8ff; color:#36c8ff; }
     .msg.ask { background:transparent; border:2px solid var(--focus); } .msg.ask .who { color:var(--focus); }
@@ -292,7 +293,10 @@
         var q = question();
         if (q && !S.listening) { bodyEl.appendChild(bubble('ask', target().name + ' asks permission', q)); helpEl.textContent = 'Pinch = YES · ◀ = no · ▲ ▼ scroll'; }
         else {
-          if (r2 && r2.status === 'busy' && !S.listening) bodyEl.appendChild(el('msg working', '● ' + target().name + ' is working…'));
+          if (r2 && r2.status === 'busy' && !S.listening) {
+            bodyEl.appendChild(el('msg working', '● ' + target().name + ' is working…'));
+            if (r2.progress && r2.progress.length) bodyEl.appendChild(el('msg progress', r2.progress.join('\n')));
+          }
           helpEl.textContent = S.listening ? 'Pinch = stop' : 'Pinch = speak · ▶ = read reply · Back = list';
         }
         var last = bodyEl.lastElementChild;
