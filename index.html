@@ -84,7 +84,7 @@
     var reading = null;
     // ---- background music: YouTube's own player in an isolated frame (no YouTube script in this page) ----
     var MUSIC_ID = 'P5r8Lp4tv2M';
-    var music = { on: false, frame: null, ready: false, playing: null, vol: null, level: 40 };
+    var music = { on: false, frame: null, ready: false, playing: null, vol: null, level: 40, yt: -1, pausedAt: 0, kickAt: 0 };
     try { var lv = parseInt(localStorage.getItem('gl-music-vol'), 10); if (lv >= 0 && lv <= 100) music.level = lv; } catch (e) {}
     function musicCmd(func, args) {
       if (!music.frame || !music.frame.contentWindow || !music.ready) return;   // the player starts itself (autoplay); commands only once it answers
@@ -112,9 +112,24 @@
       musicSync();
     }
     window.addEventListener('message', function (ev) {          // the player answers once it is ready; only YouTube's frame is listened to
-      if (ev.origin !== 'https://www.youtube-nocookie.com' || !music.frame || ev.source !== music.frame.contentWindow || music.ready) return;
-      music.ready = true; music.playing = null; music.vol = null; musicSync();
+      if (ev.origin !== 'https://www.youtube-nocookie.com' || !music.frame || ev.source !== music.frame.contentWindow) return;
+      var d = null; try { d = typeof ev.data === 'string' ? JSON.parse(ev.data) : ev.data; } catch (e) {}
+      var st = d && (d.info && typeof d.info.playerState === 'number' ? d.info.playerState : (d.event === 'onStateChange' && typeof d.info === 'number' ? d.info : null));
+      if (st !== null && st !== undefined) musicState(st);
+      if (!music.ready) { music.ready = true; music.playing = null; music.vol = null; musicSync(); }
     });
+    function musicState(st) {                                    // YouTube player state: 1 playing, 2 paused, 0 ended, 3 buffering
+      if (st === 2 && music.yt !== 2) music.pausedAt = Date.now();
+      music.yt = st;
+    }
+    music.onState = musicState;
+    function musicResume() {                                     // another sound (notification, call, assistant) paused the player: start it again
+      if (!music.frame || !music.ready || !music.on || S.listening) return;
+      var now = Date.now();
+      var stopped = (music.yt === 2 || music.yt === 0) && now - music.pausedAt > 3000;   // wait 3 s so a short interruption can finish
+      var unknown = music.yt === -1 && now - music.kickAt > 10000;                       // no state reports at all: nudge every 10 s (harmless if already playing)
+      if ((stopped || unknown) && now - music.kickAt > 3000) { music.kickAt = now; musicCmd('playVideo'); if (music.yt === 0) musicCmd('seekTo', [0, true]); }
+    }
     function keepFocus() {                                       // the player must never take the gestures: give focus back to the app
       if (music.frame && document.activeElement === music.frame) { try { music.frame.blur(); } catch (e) {} }
       if (!document.hasFocus()) { try { window.focus(); } catch (e) {} }
@@ -134,7 +149,7 @@
       try { localStorage.setItem('gl-music-vol', String(music.level)); } catch (e) {}
       musicSync();
     }
-    setInterval(function () { musicSync(); if (music.frame && document.activeElement === music.frame) keepFocus(); }, 400);
+    setInterval(function () { musicSync(); musicResume(); if (music.frame && document.activeElement === music.frame) keepFocus(); }, 400);
     function stopSpeaking() { if (tts) tts.cancel(); speaking = false; reading = null; }
     function sentences(text) {                              // [start, end) of each sentence in the shown text
       var re = /[^.!?\n]+[.!?]*\s*/g, out = [], m;
