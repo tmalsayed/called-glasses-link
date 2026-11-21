@@ -6,7 +6,7 @@
   <meta name="description" content="Talk to Claude sessions from Meta Ray-Ban Display glasses. Messages are signed on the glasses; replies are encrypted.">
   <meta name="mrbd-web-app-capable" content="yes">
   <meta name="robots" content="noindex, nofollow, noarchive">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://monitor.protaha.com; img-src data:; frame-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://monitor.protaha.com; img-src data:; frame-src https://www.youtube-nocookie.com; base-uri 'none'; form-action 'none'">
   <title>Glasses Link</title>
   <link rel="icon" href="data:,">
   <style>
@@ -47,6 +47,8 @@
     .pin span { width:64px; height:80px; border-radius:12px; background:var(--card); display:flex; align-items:center; justify-content:center; font-size:44px; font-weight:700; border:3px solid transparent; }
     .pin span.on { border-color:var(--focus); }
     .help { font-size:16px; color:var(--muted); text-align:center; }
+    .vol { height:22px; border-radius:11px; background:var(--card); overflow:hidden; } .vol .fill { height:100%; background:var(--idle); }
+    #music { position:fixed; right:0; bottom:0; width:200px; height:200px; border:0; opacity:0; pointer-events:none; }
   </style>
 </head>
 <body>
@@ -80,6 +82,45 @@
     var tts = window.speechSynthesis || null, speaking = false;
     // reading = what is being read aloud, so draw() can highlight the sentence (and word, if the voice reports words) and scroll to it
     var reading = null;
+    // ---- background music: YouTube's own player in an isolated frame (no YouTube script in this page) ----
+    var MUSIC_ID = 'P5r8Lp4tv2M';
+    var music = { on: false, frame: null, ready: false, playing: null, vol: null, level: 40 };
+    try { var lv = parseInt(localStorage.getItem('gl-music-vol'), 10); if (lv >= 0 && lv <= 100) music.level = lv; } catch (e) {}
+    function musicCmd(func, args) {
+      if (!music.frame || !music.frame.contentWindow || !music.ready) return;   // the player starts itself (autoplay); commands only once it answers
+      music.frame.contentWindow.postMessage(JSON.stringify({ event: 'command', func: func, args: args || [] }), 'https://www.youtube-nocookie.com');
+    }
+    function musicSync() {
+      if (!music.frame) return;
+      var want = music.on && !S.listening;                   // plays while the app is open; pauses only while the mic listens
+      var vol = (speaking || (tts && tts.speaking)) ? Math.round(music.level * 0.35) : music.level;   // quieter while the page reads aloud
+      if (want !== music.playing) { musicCmd(want ? 'playVideo' : 'pauseVideo'); music.playing = want; }
+      if (want && vol !== music.vol) { musicCmd('setVolume', [vol]); music.vol = vol; }
+    }
+    function musicToggle() {
+      music.on = !music.on;
+      if (music.on && !music.frame) {
+        var f = document.createElement('iframe');
+        f.id = 'music'; f.title = 'Background music'; f.allow = 'autoplay; encrypted-media';
+        f.src = 'https://www.youtube-nocookie.com/embed/' + MUSIC_ID + '?autoplay=1&loop=1&playlist=' + MUSIC_ID + '&controls=0&enablejsapi=1&playsinline=1';
+        f.addEventListener('load', function () {
+          try { f.contentWindow.postMessage(JSON.stringify({ event: 'listening', id: 'music' }), 'https://www.youtube-nocookie.com'); } catch (e) {}
+          setTimeout(function () { if (!music.ready) { music.ready = true; music.playing = null; music.vol = null; musicSync(); } }, 4000);   // fallback if it never answers
+        });
+        document.body.appendChild(f); music.frame = f; music.playing = true;
+      }
+      musicSync();
+    }
+    window.addEventListener('message', function (ev) {          // the player answers once it is ready; only YouTube's frame is listened to
+      if (ev.origin !== 'https://www.youtube-nocookie.com' || !music.frame || ev.source !== music.frame.contentWindow || music.ready) return;
+      music.ready = true; music.playing = null; music.vol = null; musicSync();
+    });
+    function musicVol(d) {
+      music.level = Math.max(0, Math.min(100, music.level + d));
+      try { localStorage.setItem('gl-music-vol', String(music.level)); } catch (e) {}
+      musicSync();
+    }
+    setInterval(musicSync, 400);
     function stopSpeaking() { if (tts) tts.cancel(); speaking = false; reading = null; }
     function sentences(text) {                              // [start, end) of each sentence in the shown text
       var re = /[^.!?\n]+[.!?]*\s*/g, out = [], m;
@@ -217,7 +258,7 @@
       var MAX_MS = 180000, MAX_RESTARTS = 60;
       function join(a, b) { a = a.trim(); b = b.trim(); return a && b ? a + ' ' + b : (a || b); }
       var myId = ++listenId;
-      listenStop = false; listenCancel = false; S.listening = true; S.draft = ''; S.staps = 0; draw();
+      listenStop = false; listenCancel = false; S.listening = true; S.draft = ''; S.staps = 0; draw(); musicSync();
       function finish() {
         if (myId !== listenId) return;                       // an old, cancelled session ending late: leave the new one alone
         recog = null; S.listening = false;
@@ -298,7 +339,7 @@
     function draw() {
       bodyEl.textContent = '';
       var left = S.until ? Math.max(0, Math.round((S.until - Date.now()) / 60000)) : 0;
-      if ((S.mode === 'chat' || S.mode === 'home' || S.mode === 'confirm') && Date.now() >= S.until) { S.mode = 'pin'; S.session = ''; S.pin = [0, 0, 0, 0]; S.at = 0; S.msg = 'Session ended. Enter your PIN.'; }
+      if ((S.mode === 'chat' || S.mode === 'home' || S.mode === 'confirm' || S.mode === 'music') && Date.now() >= S.until) { S.mode = 'pin'; S.session = ''; S.pin = [0, 0, 0, 0]; S.at = 0; S.msg = 'Session ended. Enter your PIN.'; }
       if (S.msg) bodyEl.appendChild(el('note', S.msg));
       titleEl.textContent = (S.mode === 'chat' || S.mode === 'confirm') ? target().name : 'Glasses Link';
       if (S.mode === 'boot') { stateEl.textContent = ''; helpEl.textContent = ''; bodyEl.appendChild(el('note', 'Starting…')); return; }
@@ -329,7 +370,21 @@
           var sub = el('sub', r.question ? 'asks permission' : r.status === 'busy' ? 'working' : r.status === 'off' ? 'not running' : r.status ? 'ready' : '…');
           row.appendChild(sub); bodyEl.appendChild(row);
         });
+        var mr = el('row ' + (music.on ? 'idle' : ''));
+        if (S.onMusic) mr.classList.add('on');
+        mr.appendChild(el('dot')); mr.appendChild(document.createTextNode('Music'));
+        mr.appendChild(el('sub', music.on ? 'playing' : 'off')); bodyEl.appendChild(mr);
         helpEl.textContent = '▲ ▼ choose · Pinch = open';
+        return;
+      }
+      if (S.mode === 'music') {
+        stateEl.textContent = left + ' min';
+        titleEl.textContent = 'Music';
+        bodyEl.appendChild(el('big', music.on ? '▶ Playing' : '■ Stopped'));
+        bodyEl.appendChild(el('note', 'Arabic oud lo-fi · keeps playing while the app is open'));
+        var vb = el('vol'); var fill = el('fill'); fill.style.width = music.level + '%'; vb.appendChild(fill); bodyEl.appendChild(vb);
+        bodyEl.appendChild(el('note', 'Volume ' + music.level + ' %'));
+        helpEl.textContent = 'Pinch = play/stop · ▶ ▲ louder · ◀ ▼ softer · Back = list';
         return;
       }
       if (S.mode === 'confirm') {
@@ -429,6 +484,7 @@
       if (S.listening) { cancelListening(); if (S.mode === 'chat') history.pushState({ v: 'chat' }, '', location.href); return; }
       if (S.mode === 'confirm') { cancelSend(); history.pushState({ v: 'chat' }, '', location.href); return; }   // Back on the send screen = cancel, stay in the chat
       if (S.mode === 'chat') { S.mode = 'home'; stopSpeaking(); draw(); }
+      else if (S.mode === 'music') { S.mode = 'home'; draw(); }
     });
     function cancelSend() { S.mode = 'chat'; S.draft = ''; S.taps = 0; stopSpeaking(); S.msg = 'Cancelled.'; draw(); }
     document.addEventListener('keydown', function (e) {
@@ -449,7 +505,7 @@
       }
       if (BACK[k]) {
         if (S.mode === 'confirm') { e.preventDefault(); cancelSend(); return; }
-        if (S.mode === 'chat') { e.preventDefault(); history.back(); }
+        if (S.mode === 'chat' || S.mode === 'music') { e.preventDefault(); history.back(); }
         return;                                                   // elsewhere Back leaves the app
       }
       e.preventDefault();
@@ -473,9 +529,18 @@
         else if (k === 'Enter') { if (S.at < 3) S.at++; else { pinDone(); return; } }
         draw(); return;
       }
+      if (S.mode === 'music') {
+        if (k === 'Enter') musicToggle();
+        else if (k === 'ArrowRight' || k === 'ArrowUp') musicVol(10);
+        else if (k === 'ArrowLeft' || k === 'ArrowDown') musicVol(-10);
+        draw(); return;
+      }
       if (S.mode === 'home') {
-        if (k === 'ArrowDown' || k === 'ArrowRight') S.target = (S.target + 1) % TARGETS.length;
-        else if (k === 'ArrowUp' || k === 'ArrowLeft') S.target = (S.target + TARGETS.length - 1) % TARGETS.length;
+        var N = TARGETS.length + 1, pos = S.onMusic ? TARGETS.length : S.target;
+        if (k === 'ArrowDown' || k === 'ArrowRight') pos = (pos + 1) % N;
+        else if (k === 'ArrowUp' || k === 'ArrowLeft') pos = (pos + N - 1) % N;
+        if (pos === TARGETS.length) S.onMusic = true; else { S.onMusic = false; S.target = pos; }
+        if (k === 'Enter' && S.onMusic) { history.pushState({ v: 'music' }, '', location.href); S.mode = 'music'; S.msg = ''; }
         else if (k === 'Enter') { history.pushState({ v: 'chat' }, '', location.href); S.mode = 'chat'; S.msg = ''; poll(); }
         draw(); return;
       }
@@ -532,7 +597,7 @@
       draw();
     }).catch(function () { S.mode = 'pair'; S.msg = 'Storage not available: pairing will not be remembered.'; draw(); });
     setInterval(function () { if (S.mode === 'chat' || S.mode === 'home') poll(); }, 2500);
-    setInterval(function () { if (S.mode === 'chat' || S.mode === 'home' || S.mode === 'confirm') draw(); }, 30000);
+    setInterval(function () { if (S.mode === 'chat' || S.mode === 'home' || S.mode === 'confirm' || S.mode === 'music') draw(); }, 30000);
   })();
   </script>
 </body>
