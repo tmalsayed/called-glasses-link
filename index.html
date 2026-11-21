@@ -66,7 +66,7 @@
     var RELAY = LOCAL ? 'http://127.0.0.1:8791/devlink/api/' : 'https://monitor.protaha.com/devlink/api/';
     var PUB = LOCAL ? 'http://127.0.0.1:8766/pub/' : 'https://monitor.protaha.com/devlink/pub/';
     var SALT = 'glasses-devlink-v2', ITER = 200000, NWORDS = 10;
-    var TARGETS = [{ id: 'hermes', name: 'hermes' }, { id: 'glasses-dev', name: 'glasses-dev' }, { id: 'claude', name: 'Ask Claude', ask: true }];
+    var TARGETS = [{ id: 'hermes', name: 'hermes' }, { id: 'glasses-dev', name: 'glasses-dev' }, { id: 'claude', name: 'Ask Claude', ask: true }, { id: 'grano', name: 'Grano', noApprove: true }];
 
     var bodyEl = document.getElementById('body'), stateEl = document.getElementById('state'),
         helpEl = document.getElementById('help'), titleEl = document.getElementById('title');
@@ -427,7 +427,7 @@
         }
         if (S.listening) bodyEl.appendChild(bubble('listening', 'Listening… (pinch 2× to stop)', S.draft || '…'));
         var q = question();
-        if (q && !S.listening) { bodyEl.appendChild(bubble('ask', target().name + ' asks permission', q)); helpEl.textContent = 'Pinch = YES · ▼ = no · ◀ = next window'; }
+        if (q && !S.listening) { bodyEl.appendChild(bubble('ask', target().name + ' asks permission', q)); helpEl.textContent = target().noApprove ? 'YES only at terminal/phone · ▼ = no · ◀ = next window' : 'Pinch = YES · ▼ = no · ◀ = next window'; }
         else {
           if (r2 && r2.status === 'busy' && !S.listening) {
             bodyEl.appendChild(el('msg working', '● ' + target().name + (target().ask ? ' is thinking…' : ' is working…')));
@@ -582,6 +582,7 @@
         if (k === 'ArrowLeft') { goWindow(1); return; }              // swipe left = next window
         if (k === 'ArrowRight') { readReply(); return; }              // swipe right = read the reply (again = stop)
         var q = question();
+        if (q && k === 'Enter' && target().noApprove) { S.msg = 'Approve this at the terminal or phone.'; draw(); return; }
         if (q && (k === 'Enter' || k === 'ArrowDown')) {
           var kind = k === 'Enter' ? 'approve' : 'deny', t = target().id;
           send(kind, '').then(function (ok) { if (ok) { S.answered[t] = q; S.msg = kind === 'approve' ? 'Approved ✓' : 'Refused ✓'; draw(); } });
