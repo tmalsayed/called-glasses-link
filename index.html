@@ -101,8 +101,8 @@
       music.on = !music.on;
       if (music.on && !music.frame) {
         var f = document.createElement('iframe');
-        f.id = 'music'; f.title = 'Background music'; f.allow = 'autoplay; encrypted-media';
-        f.src = 'https://www.youtube-nocookie.com/embed/' + MUSIC_ID + '?autoplay=1&loop=1&playlist=' + MUSIC_ID + '&controls=0&enablejsapi=1&playsinline=1';
+        f.id = 'music'; f.title = 'Background music'; f.allow = 'autoplay; encrypted-media'; f.tabIndex = -1; f.setAttribute('aria-hidden', 'true');
+        f.src = 'https://www.youtube-nocookie.com/embed/' + MUSIC_ID + '?autoplay=1&loop=1&playlist=' + MUSIC_ID + '&controls=0&disablekb=1&fs=0&enablejsapi=1&playsinline=1&vq=small';
         f.addEventListener('load', function () {
           try { f.contentWindow.postMessage(JSON.stringify({ event: 'listening', id: 'music' }), 'https://www.youtube-nocookie.com'); } catch (e) {}
           setTimeout(function () { if (!music.ready) { music.ready = true; music.playing = null; music.vol = null; musicSync(); } }, 4000);   // fallback if it never answers
@@ -115,12 +115,18 @@
       if (ev.origin !== 'https://www.youtube-nocookie.com' || !music.frame || ev.source !== music.frame.contentWindow || music.ready) return;
       music.ready = true; music.playing = null; music.vol = null; musicSync();
     });
+    function keepFocus() {                                       // the player must never take the gestures: give focus back to the app
+      if (music.frame && document.activeElement === music.frame) { try { music.frame.blur(); } catch (e) {} }
+      if (!document.hasFocus()) { try { window.focus(); } catch (e) {} }
+      if (document.activeElement && document.activeElement !== document.body && document.activeElement.blur) document.activeElement.blur();
+    }
+    window.addEventListener('blur', function () { if (music.frame) setTimeout(keepFocus, 0); });
     function musicVol(d) {
       music.level = Math.max(0, Math.min(100, music.level + d));
       try { localStorage.setItem('gl-music-vol', String(music.level)); } catch (e) {}
       musicSync();
     }
-    setInterval(musicSync, 400);
+    setInterval(function () { musicSync(); if (music.frame && document.activeElement === music.frame) keepFocus(); }, 400);
     function stopSpeaking() { if (tts) tts.cancel(); speaking = false; reading = null; }
     function sentences(text) {                              // [start, end) of each sentence in the shown text
       var re = /[^.!?\n]+[.!?]*\s*/g, out = [], m;
