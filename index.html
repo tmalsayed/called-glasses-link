@@ -216,7 +216,7 @@
       var kept = '', cur = '', back = S.mode, t0 = Date.now(), restarts = 0, fatal = false;
       var MAX_MS = 180000, MAX_RESTARTS = 60;
       function join(a, b) { a = a.trim(); b = b.trim(); return a && b ? a + ' ' + b : (a || b); }
-      listenStop = false; S.listening = true; S.draft = ''; draw();
+      listenStop = false; S.listening = true; S.draft = ''; S.staps = 0; draw();
       function finish() {
         recog = null; S.listening = false;
         if (fatal) { draw(); return; }                       // keep the mic error on screen
@@ -325,8 +325,8 @@
       if (S.mode === 'confirm') {
         stateEl.textContent = left + ' min';
         bodyEl.appendChild(bubble('you', 'Send to ' + target().name + '?', S.draft));
-        bodyEl.appendChild(el('taps', [1, 2, 3].map(function (n) { return n <= (S.taps || 0) ? '●' : '○'; }).join(' ')));
-        helpEl.textContent = 'Pinch 3 times = SEND · ◀ = cancel';
+        bodyEl.appendChild(el('taps', [1, 2].map(function (n) { return n <= (S.taps || 0) ? '●' : '○'; }).join(' ')));
+        helpEl.textContent = 'Pinch 2× = SEND · Swipe = say again · Back = cancel';
         return;
       }
       if (S.mode === 'chat') {
@@ -346,7 +346,7 @@
             bodyEl.appendChild(b);
           });
         }
-        if (S.listening) bodyEl.appendChild(bubble('listening', 'Listening… (pinch to stop)', S.draft || '…'));
+        if (S.listening) bodyEl.appendChild(bubble('listening', 'Listening… (pinch 2× to stop)', S.draft || '…'));
         var q = question();
         if (q && !S.listening) { bodyEl.appendChild(bubble('ask', target().name + ' asks permission', q)); helpEl.textContent = 'Pinch = YES · ◀ = no · ▲ ▼ scroll'; }
         else {
@@ -354,7 +354,7 @@
             bodyEl.appendChild(el('msg working', '● ' + target().name + (target().ask ? ' is thinking…' : ' is working…')));
             if (r2.progress && r2.progress.length) bodyEl.appendChild(el('msg progress', r2.progress.join('\n')));
           }
-          helpEl.textContent = S.listening ? 'Pinch = stop' : target().ask ? 'Pinch = ask · ▶ = read again · Back = list' : 'Pinch = speak · ▶ = read reply · Back = list';
+          helpEl.textContent = S.listening ? 'Pinch 2× = stop' : target().ask ? 'Pinch 2× = ask · ▶ = read again · Back = list' : 'Pinch 2× = speak · ▶ = read reply · Back = list';
         }
         var hl = reading && (bodyEl.querySelector('.hl-w') || bodyEl.querySelector('.hl-s'));
         if (hl) {                                                  // while reading: keep the words being read in the upper third
@@ -415,13 +415,28 @@
     }
 
     var BACK = { Escape: 1, Backspace: 1, BrowserBack: 1, GoBack: 1 };
-    window.addEventListener('popstate', function () { if (S.mode === 'chat' || S.mode === 'confirm') { S.mode = 'home'; stopSpeaking(); draw(); } });
+    window.addEventListener('popstate', function () {
+      if (S.mode === 'confirm') { cancelSend(); history.pushState({ v: 'chat' }, '', location.href); return; }   // Back on the send screen = cancel, stay in the chat
+      if (S.mode === 'chat') { S.mode = 'home'; stopSpeaking(); draw(); }
+    });
+    function cancelSend() { S.mode = 'chat'; S.draft = ''; S.taps = 0; stopSpeaking(); S.msg = 'Cancelled.'; draw(); }
     document.addEventListener('keydown', function (e) {
       var k = e.key;
       if (S.busy) { e.preventDefault(); return; }
-      if (S.listening) { if (k === 'Enter') { e.preventDefault(); stopListening(); } return; }
+      if (S.listening) {
+        if (k === 'Enter') {
+          e.preventDefault();
+          if (S.mode === 'pair') { stopListening(); return; }        // pairing words: one pinch, as before
+          var nowS = Date.now();
+          S.staps = (S.staps && nowS - S.stapAt < 4000) ? S.staps + 1 : 1; S.stapAt = nowS;
+          if (S.staps < 2) { S.msg = 'Pinch once more to stop'; draw(); return; }
+          S.staps = 0; S.msg = ''; stopListening();
+        }
+        return;
+      }
       if (BACK[k]) {
-        if (S.mode === 'chat' || S.mode === 'confirm') { e.preventDefault(); history.back(); }
+        if (S.mode === 'confirm') { e.preventDefault(); cancelSend(); return; }
+        if (S.mode === 'chat') { e.preventDefault(); history.back(); }
         return;                                                   // elsewhere Back leaves the app
       }
       e.preventDefault();
@@ -452,11 +467,19 @@
         draw(); return;
       }
       if (S.mode === 'confirm') {
-        if (k === 'ArrowLeft') { S.mode = 'chat'; S.draft = ''; S.msg = 'Cancelled.'; draw(); return; }
+        if (k === 'ArrowLeft' || k === 'ArrowRight') {                                 // edit: say the message again; the new words replace the old
+          var old = S.draft; S.taps = 0; stopSpeaking(); S.mode = 'chat'; S.msg = 'Say it again';
+          listen(function (said) {
+            S.mode = 'confirm'; S.taps = 0;
+            if (!said) { S.draft = old; S.msg = "Didn't catch that. Kept the old words."; draw(); return; }
+            S.draft = said; S.msg = 'Changed.'; draw(); say('Send: ' + said + '? Pinch twice to send.', true);
+          });
+          return;
+        }
         if (k === 'Enter') {
           var now = Date.now();
-          S.taps = (S.taps && now - S.tapAt < 3000) ? S.taps + 1 : 1; S.tapAt = now;
-          if (S.taps < 3) { S.msg = S.taps + ' of 3 · pinch ' + (3 - S.taps) + ' more to send'; draw(); return; }
+          S.taps = (S.taps && now - S.tapAt < 4000) ? S.taps + 1 : 1; S.tapAt = now;
+          if (S.taps < 2) { S.msg = '1 of 2 · pinch once more to send'; draw(); return; }
           S.taps = 0; stopSpeaking();
           send('text', S.draft).then(function (ok) { if (ok) { S.mode = 'chat'; S.draft = ''; S.msg = 'Sent ✓'; say('Sent.', true); draw(); } });
         }
@@ -472,13 +495,19 @@
           send(kind, '').then(function (ok) { if (ok) { S.answered[t] = q; S.msg = kind === 'approve' ? 'Approved ✓' : 'Refused ✓'; draw(); } });
           return;
         }
+        if (k === 'Enter') {
+          var nowL = Date.now();
+          S.ltaps = (S.ltaps && nowL - S.ltapAt < 4000) ? S.ltaps + 1 : 1; S.ltapAt = nowL;
+          if (S.ltaps < 2) { S.msg = 'Pinch once more to ' + (target().ask ? 'ask' : 'speak'); draw(); return; }
+          S.ltaps = 0; S.msg = '';
+        }
         if (k === 'Enter') listen(function (said) {
           if (!said) { if (!S.msg) S.msg = "Didn't catch that."; draw(); return; }
           if (target().ask) {
             send('text', said).then(function (ok) { if (ok) { S.msg = 'Asked ✓ · answer in a few seconds'; say('Asking.', true); draw(); } });
             return;
           }
-          S.draft = said; S.mode = 'confirm'; S.taps = 0; S.msg = ''; draw(); say('Send: ' + said + '? Pinch three times to send.', true);
+          S.draft = said; S.mode = 'confirm'; S.taps = 0; S.msg = ''; draw(); say('Send: ' + said + '? Pinch twice to send.', true);
         });
       }
     });
