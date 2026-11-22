@@ -10,7 +10,7 @@
   <title>Glasses Link</title>
   <link rel="icon" href="data:,">
   <style>
-    :root { --bg:#000; --card:#1c1f2a; --text:#fff; --muted:#b8bccb; --busy:#ffb84d; --idle:#5ee08a; --focus:#ffd34d; --accent:#c08cff; --r:14px; }
+    :root { --bg:#000; --card:#1c1f2a; --text:#fff; --muted:#b8bccb; --busy:#5ee08a; --idle:#5ee08a; --focus:#ffd34d; --accent:#c08cff; --r:14px; }
     * { margin:0; padding:0; box-sizing:border-box; }
     html, body { width:100%; height:100%; }
     body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--text); overflow:hidden; }
@@ -24,7 +24,7 @@
     .row.on { border-color:var(--focus); }
     .row .sub { margin-left:auto; font-size:18px; font-weight:400; color:var(--muted); }
     .dot { width:18px; height:18px; border-radius:50%; background:#8a8fa0; flex:none; }
-    .busy .dot { background:var(--busy); } .idle .dot { background:var(--idle); }
+    .busy .dot, .idle .dot { background:#8a8fa0; }
     .msg { flex:none; border-radius:var(--r); padding:10px 16px; font-size:21px; line-height:1.35; white-space:pre-line; }
     .msg .who { display:block; font-size:16px; font-weight:700; margin-bottom:2px; letter-spacing:.04em; text-transform:uppercase; }
     .msg.claude { background:var(--card); } .msg.claude .who { color:#36c8ff; }
@@ -49,6 +49,23 @@
     .help { font-size:16px; color:var(--muted); text-align:center; }
     .vol { height:22px; border-radius:11px; background:var(--card); overflow:hidden; } .vol .fill { height:100%; background:var(--idle); }
     #music { position:fixed; right:0; bottom:0; width:200px; height:200px; border:0; opacity:0; pointer-events:none; }
+    /* Session rail: always on the right while unlocked. red = waiting for you, green < 1 h, orange < 24 h, grey older */
+    :root { --red:#ff5c5c; --green:#5ee08a; --orange:#ffb84d; --grey:#9aa0b2; }
+    body.rail-on .screen { padding-right:164px; }
+    #rail { position:fixed; top:16px; right:12px; bottom:16px; width:140px; z-index:15; display:none; flex-direction:column; gap:6px; overflow:hidden; }
+    body.rail-on #rail { display:flex; }
+    #rail .rhead { font-size:17px; font-weight:800; text-align:center; padding:4px 0 2px; letter-spacing:.02em; }
+    #rail .rhead.red { color:var(--red); } #rail .rhead.ok { color:var(--green); } #rail .rhead.off { color:var(--grey); }
+    #rail .pill { flex:none; display:flex; flex-direction:column; gap:1px; background:var(--card); border-radius:10px; border-left:7px solid var(--grey); padding:5px 8px 5px 9px; }
+    #rail .pill .rn { font-size:16px; font-weight:700; line-height:1.15; color:#fff; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; word-break:break-word; }
+    #rail .pill .rt { font-size:17px; font-weight:700; font-variant-numeric:tabular-nums; }
+    #rail .pill.green { border-left-color:var(--green); } #rail .pill.green .rt { color:var(--green); }
+    #rail .pill.orange { border-left-color:var(--orange); } #rail .pill.orange .rt { color:var(--orange); }
+    #rail .pill.grey { border-left-color:var(--grey); } #rail .pill.grey .rt { color:var(--grey); } #rail .pill.grey .rn { color:#c9cdd8; }
+    #rail .pill.red { background:#b3261e; border-left-color:#ff5c5c; } #rail .pill.red .rt { color:#fff; }
+    .dot.t-red { background:var(--red); } .dot.t-green { background:var(--green); } .dot.t-orange { background:var(--orange); } .dot.t-grey { background:var(--grey); } .dot.t-ask { background:#36c8ff; }
+    #rail .more { font-size:15px; color:var(--muted); text-align:center; }
+    #rail.stale .pill { background:var(--card) !important; border-left-color:#555 !important; } #rail.stale .pill .rt, #rail.stale .pill .rn { color:#9aa0b2 !important; }
   </style>
 </head>
 <body>
@@ -57,6 +74,7 @@
     <div id="body"></div>
     <div class="help" id="help"></div>
   </section>
+  <aside id="rail" aria-label="Sessions"></aside>
   <script src="words.js"></script>
   <script>
   (function () {
@@ -358,6 +376,83 @@
       return r.question;
     }
 
+    // ---- session rail (right side, every unlocked screen) ----
+    var railEl = document.getElementById('rail'), railData = null, railOffline = false, railSkew = 0, railFails = 0;
+    function tone(s, now) {
+      if (s.wait) return 'red';
+      if (s.status === 'busy') return 'green';
+      var a = now - (s.last || s.since || 0);
+      return a < 3600 ? 'green' : a < 86400 ? 'orange' : 'grey';
+    }
+    function short(sec) {
+      if (sec < 60) return 'now';
+      if (sec < 3600) return Math.floor(sec / 60) + 'm';
+      if (sec < 86400) { var h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60); return h + 'h' + (h < 10 && m ? ' ' + m + 'm' : ''); }
+      return Math.floor(sec / 86400) + 'd';
+    }
+    var TONE_RANK = { red: 0, green: 1, orange: 2, grey: 3 };
+    function railOrder(list, now) {
+      return list.map(function (s) { return { s: s, t: tone(s, now) }; }).sort(function (a, b) {
+        if (a.t !== b.t) return TONE_RANK[a.t] - TONE_RANK[b.t];
+        if (a.t === 'red') return (a.s.wsince || 0) - (b.s.wsince || 0);       // longest waiting first
+        if ((a.s.status === 'busy') !== (b.s.status === 'busy')) return a.s.status === 'busy' ? -1 : 1;   // working now first
+        return (b.s.last || b.s.since || 0) - (a.s.last || a.s.since || 0);    // most recent first
+      });
+    }
+    function renderRail() {
+      var on = railShown();
+      document.body.classList.toggle('rail-on', on);
+      if (!on) return;
+      var now = railNow(), list = (railData && railData.sessions) || [];
+      var items = railOrder(list, now), reds = 0;
+      items.forEach(function (x) { if (x.t === 'red') reds++; });
+      var stale = railStale();
+      railEl.textContent = '';
+      railEl.classList.toggle('stale', stale);
+      var h = document.createElement('div');
+      h.className = 'rhead ' + (stale ? 'off' : reds ? 'red' : 'ok');
+      h.textContent = stale ? (railData ? 'offline' : '…') : reds ? reds + ' waiting' : 'none waiting';
+      railEl.appendChild(h);
+      var pills = [];
+      items.forEach(function (x) {
+        var s = x.s, p = document.createElement('div'); p.className = 'pill ' + x.t;
+        var n = document.createElement('span'); n.className = 'rn'; n.textContent = s.label;
+        var t = document.createElement('span'); t.className = 'rt';
+        if (x.t === 'red') { var w = short(Math.max(0, now - (s.wsince || now))); t.textContent = (s.wait === 'menu' ? 'answer · ' : 'reply · ') + (w === 'now' ? 'new' : w); }
+        else if (s.status === 'busy') t.textContent = 'working';
+        else if (!s.last) t.textContent = '—';
+        else { var sa = short(Math.max(0, now - s.last)); t.textContent = sa === 'now' ? 'just now' : sa + ' ago'; }
+        p.appendChild(n); p.appendChild(t); railEl.appendChild(p); pills.push(p);
+      });
+      var bottom = railEl.getBoundingClientRect().bottom, hidden = 0, m = null;
+      while (pills.length && railEl.lastChild.getBoundingClientRect().bottom > bottom + 0.5) {
+        if (!m) { m = document.createElement('div'); m.className = 'more'; railEl.appendChild(m); }
+        railEl.removeChild(pills.pop()); hidden++; m.textContent = '+' + hidden + ' more';
+      }
+    }
+    var RAIL_NAMES = { grano: 'GRANO Servers' };
+    function railSession(id) {
+      if (railStale()) return null;
+      var want = RAIL_NAMES[id] || id, list = (railData && railData.sessions) || [];
+      for (var i = 0; i < list.length; i++) if (list[i].label === want) return list[i];
+      return null;
+    }
+    function fetchRail() {
+      if (!K || !railShown()) return;
+      fetch(PUB + 'r-sessions.json?t=' + Date.now(), { cache: 'no-store' })
+        .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+        .then(decrypt)
+        .then(function (p) { railFails = 0; if (railData && (p.at || 0) < (railData.at || 0)) return; if (!railData || p.at !== railData.at) railGotAt = Math.floor(Date.now() / 1000); railData = p; railOffline = false; railSkew = Math.floor(Date.now() / 1000) - (p.at || 0); if (S.mode === 'home') draw(); else renderRail(); })
+        .catch(function () { if (++railFails >= 3) { railOffline = true; renderRail(); } });
+    }
+    function railShown() { return !!K && (S.mode === 'home' || S.mode === 'chat' || S.mode === 'confirm' || S.mode === 'music'); }
+    function railNow() { return Math.floor(Date.now() / 1000) - railSkew; }      // control-box clock (glasses clock may drift)
+    function railStale() { var list = (railData && railData.sessions) || []; return railOffline || !railData || !list.length || Math.floor(Date.now() / 1000) - railFetchedAt() >= 120; }
+    var railGotAt = 0;
+    function railFetchedAt() { return railGotAt; }
+    setInterval(fetchRail, 2500);
+    setInterval(renderRail, 10000);
+
     // ---- drawing ----
     function pinBoxes() {
       var w = el('pin');
@@ -369,6 +464,7 @@
       bodyEl.textContent = '';
       var left = S.until ? Math.max(0, Math.round((S.until - Date.now()) / 60000)) : 0;
       if ((S.mode === 'chat' || S.mode === 'home' || S.mode === 'confirm' || S.mode === 'music') && Date.now() >= S.until) { S.mode = 'pin'; S.session = ''; S.pin = [0, 0, 0, 0]; S.at = 0; S.msg = 'Session ended. Enter your PIN.'; }
+      renderRail();
       if (S.msg) bodyEl.appendChild(el('note', S.msg));
       titleEl.textContent = (S.mode === 'chat' || S.mode === 'confirm') ? target().name : 'Glasses Link';
       if (S.mode === 'boot') { stateEl.textContent = ''; helpEl.textContent = ''; bodyEl.appendChild(el('note', 'Starting…')); return; }
@@ -393,10 +489,10 @@
       if (S.mode === 'home') {
         stateEl.textContent = left + ' min';
         TARGETS.forEach(function (t, i) {
-          var r = S.reply[t.id] || {}, row = el('row ' + (r.status || ''));
-          if (i === S.target) row.classList.add('on');
-          row.appendChild(el('dot')); row.appendChild(document.createTextNode(t.name));
-          var sub = el('sub', r.question ? 'asks permission' : r.status === 'busy' ? 'working' : r.status === 'off' ? 'not running' : r.status ? 'ready' : '…');
+          var r = S.reply[t.id] || {}, row = el('row ' + (r.status || '')), rs = railSession(t.id), tn = rs ? tone(rs, railNow()) : '';
+          if (i === S.target && !S.onMusic) row.classList.add('on');
+          var dot = el('dot' + (tn ? ' t-' + tn : t.ask ? ' t-ask' : '')); row.appendChild(dot); row.appendChild(document.createTextNode(t.name));
+          var sub = el('sub', r.question ? 'asks permission' : tn === 'red' ? 'waiting for you' : r.status === 'busy' ? 'working' : r.status === 'off' ? 'not running' : r.status ? 'ready' : '…');
           row.appendChild(sub); bodyEl.appendChild(row);
         });
         var mr = el('row ' + (music.on ? 'idle' : ''));
@@ -492,7 +588,7 @@
         if (!u) return;
         S.busy = false; S.pin = [0, 0, 0, 0]; S.at = 0;
         if (!u.ok) { if (u._status === 403) { S.msg = u.error + ' Tries left: ' + u.left; draw(); } else failed(u); return; }
-        S.session = u.session; S.until = Date.now() + u.seconds * 1000; S.mode = 'home'; S.msg = ''; poll(); draw();
+        S.session = u.session; S.until = Date.now() + u.seconds * 1000; S.mode = 'home'; S.msg = ''; poll(); fetchRail(); draw();
       }).catch(function () { S.busy = false; S.msg = 'Cannot reach the link.'; draw(); });
     }
     function pairDone() {
