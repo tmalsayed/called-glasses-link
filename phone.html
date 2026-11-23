@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src https://monitor.protaha.com; img-src data:; base-uri 'none'; form-action 'none'">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <meta name="color-scheme" content="light dark">
+  <title>Sessions (read only)</title>
+  <link rel="stylesheet" href="phone.css">
+</head>
+<body>
+  <header>
+    <h1>Sessions</h1>
+    <p id="head" class="head">…</p>
+  </header>
+  <main id="list" aria-live="polite"></main>
+  <p id="msg" class="msg" hidden></p>
+  <footer>
+    <p id="upd" class="upd"></p>
+    <p class="note">Read only. Nothing can be sent from this page.</p>
+    <button id="forget" type="button" hidden>Forget this phone</button>
+  </footer>
+  <script src="phone.js"></script>
+</body>
+</html>
