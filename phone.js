@@ -26,6 +26,7 @@
   }
   window.__phoneTest = { tone: tone, short: short, order: order };
 
+  var STANDALONE = navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
   var PUB = location.hostname === '127.0.0.1' ? 'http://127.0.0.1:8767/pub/' : 'https://monitor.protaha.com/devlink/pub/';
   var AAD = new TextEncoder().encode('glasses-phone-view-v1');
   var $ = function (id) { return document.getElementById(id); };
@@ -50,9 +51,15 @@
   function b64(s) { s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; var b = atob(s), u = new Uint8Array(b.length); for (var i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u; }
 
   // Key from the QR link (#v=...): import as non-extractable, store, then wipe it from the address bar.
+  var LOADED = Date.now();
+  function wipe() { if (location.hash) history.replaceState(null, '', location.pathname + location.search); $('hint').hidden = true; }
+  function wipeIfLate() { if (location.hash && !STANDALONE && Date.now() - LOADED > 120000) wipe(); }
   function takeKeyFromLink() {
     var m = /[#&]v=([A-Za-z0-9_-]{43})(?:&|$)/.exec(location.hash);
-    if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+    if (m && !STANDALONE) {
+      // In the browser: keep the key in the link for 2 minutes so "Add to Home Screen" saves it (the icon has its own storage).
+      $('hint').hidden = false; setTimeout(wipe, 120000);
+    } else wipe();
     if (!m) return Promise.resolve(false);
     var raw = b64(m[1]);
     if (raw.length !== 32) return Promise.resolve(false);
@@ -78,10 +85,11 @@
     var list = $('list'), head = $('head');
     list.textContent = '';
     if (!KEY) { head.textContent = ''; $('forget').hidden = true; $('upd').textContent = '';
-      show('This phone is not paired. At the terminal run: bash ~/ops/glasses-phone-pair.sh and scan the code.'); return; }
+      show(STANDALONE ? 'This icon has no key. Delete the icon, run bash ~/ops/glasses-phone-pair.sh at the terminal, scan the code, then add to Home Screen within 2 minutes.'
+                      : 'This phone is not paired. At the terminal run: bash ~/ops/glasses-phone-pair.sh and scan the code.'); return; }
     $('forget').hidden = false;
     if (badKey || gone >= 3) { head.textContent = ''; $('upd').textContent = '';
-      show('This phone\'s key was cancelled or replaced. Pair again at the terminal to see the sessions.'); return; }
+      show('This phone\'s key was cancelled or replaced. Pair again at the terminal' + (STANDALONE ? ', then delete this icon and add it to the Home Screen again.' : ' to see the sessions.')); return; }
     var st = stale(), n = now(), items = order((data && data.sessions) || [], n), reds = 0;
     items.forEach(function (x) { if (x.t === 'red') reds++; });
     head.className = 'head' + (!st && reds ? ' red' : '');
@@ -120,11 +128,19 @@
       .then(render);
   }
 
+  if (STANDALONE) $('forget').textContent = 'How to remove this icon\'s key';
   $('forget').addEventListener('click', function () {
+    if (STANDALONE) {   // the icon re-imports the key from its saved link each time it opens
+      alert('To remove the key from this phone, delete this Home Screen icon. To cancel it everywhere, run bash ~/ops/glasses-phone-revoke.sh at the terminal.');
+      return;
+    }
     if (!confirm('Forget this phone? You will need to scan a new code at the terminal to see the sessions again.')) return;
+    wipe();
     idb('readwrite', function (st) { return st.delete('v'); }).then(function () { KEY = null; KID = null; data = null; render(); });
   });
-  document.addEventListener('visibilitychange', function () { if (!document.hidden) poll(); });
+  document.addEventListener('visibilitychange', function () { wipeIfLate(); if (!document.hidden) poll(); });
+  window.addEventListener('pageshow', wipeIfLate);
+  setInterval(wipeIfLate, 5000);
 
   takeKeyFromLink().catch(function () { return false; }).then(loadKey).catch(function () {}).then(function () {
     render(); poll(); timer = setInterval(poll, 5000); setInterval(render, 15000);
