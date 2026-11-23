@@ -31,3 +31,4 @@ h1 { font-size: 24px; margin: 0; }
 footer { margin-top: 18px; color: var(--dim); font-size: 15px; }
 footer p { margin: 6px 0; }
 #forget { min-height: 44px; padding: 0 16px; margin-top: 8px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--fg); font: inherit; }
+.hint { margin: 0 0 12px; border-color: var(--green); }
