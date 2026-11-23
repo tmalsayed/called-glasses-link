@@ -1,0 +1,33 @@
+:root {
+  --bg: #f6f7f9; --card: #ffffff; --fg: #14161a; --dim: #4a515c; --line: #d9dde3;
+  --red: #b3261e; --green: #1b7a3a; --orange: #a14f00; --grey: #5f6670;
+  --redbg: #fdecea;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1114; --card: #1b1e24; --fg: #f1f3f5; --dim: #b4bac4; --line: #2c313a;
+    --red: #ff8a80; --green: #6fdc8c; --orange: #ffb35c; --grey: #a3aab4;
+    --redbg: #3a1714;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--fg); }
+body { font: 17px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; max-width: 640px; margin: 0 auto; padding: 16px; overflow-wrap: anywhere; }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+h1 { font-size: 24px; margin: 0; }
+.head { margin: 0; font-weight: 700; color: var(--dim); }
+.head.red { color: var(--red); }
+#list { display: flex; flex-direction: column; gap: 10px; }
+.card { display: flex; align-items: center; gap: 12px; background: var(--card); border: 1px solid var(--line); border-left: 6px solid var(--grey); border-radius: 12px; padding: 12px 14px; min-height: 56px; }
+.card .dot { width: 14px; height: 14px; border-radius: 50%; flex: none; background: var(--grey); }
+.card .name { font-weight: 700; flex: 1; min-width: 0; }
+.card .when { color: var(--dim); text-align: right; }
+.card.red { border-left-color: var(--red); background: var(--redbg); }
+.card.red .dot { background: var(--red); } .card.red .when { color: var(--red); font-weight: 700; }
+.card.green { border-left-color: var(--green); } .card.green .dot { background: var(--green); } .card.green .when { color: var(--green); }
+.card.orange { border-left-color: var(--orange); } .card.orange .dot { background: var(--orange); } .card.orange .when { color: var(--orange); }
+.stale .card { opacity: .55; filter: grayscale(1); }
+.msg { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+footer { margin-top: 18px; color: var(--dim); font-size: 15px; }
+footer p { margin: 6px 0; }
+#forget { min-height: 44px; padding: 0 16px; margin-top: 8px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--fg); font: inherit; }
