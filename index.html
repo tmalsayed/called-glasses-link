@@ -20,6 +20,7 @@
     #state { font-size:20px; color:var(--accent); font-variant-numeric:tabular-nums; }
     #body { flex:1; min-height:0; overflow-y:scroll; scrollbar-width:none; display:flex; flex-direction:column; gap:10px; }
     #body::-webkit-scrollbar { display:none; }
+    #body.many { gap:6px; } #body.many .row { padding:7px 16px; font-size:21px; } #body.many .row .sub { font-size:16px; } #body.many .dot { width:15px; height:15px; }
     .row { display:flex; align-items:center; gap:14px; background:var(--card); border-radius:var(--r); padding:14px 18px; border:3px solid transparent; font-size:24px; font-weight:700; }
     .row.on { border-color:var(--focus); }
     .row .sub { margin-left:auto; font-size:18px; font-weight:400; color:var(--muted); }
@@ -88,7 +89,9 @@
     var RELAY = LOCAL ? 'http://127.0.0.1:8791/devlink/api/' : 'https://monitor.protaha.com/devlink/api/';
     var PUB = LOCAL ? 'http://127.0.0.1:8766/pub/' : 'https://monitor.protaha.com/devlink/pub/';
     var SALT = 'glasses-devlink-v2', ITER = 200000, NWORDS = 10;
-    var TARGETS = [{ id: 'hermes', name: 'hermes' }, { id: 'glasses-dev', name: 'glasses-dev' }, { id: 'claude', name: 'Ask Claude', ask: true }, { id: 'grano', name: 'Grano', noApprove: true }];
+    var TARGETS = [{ id: 'hermes', name: 'hermes' }, { id: 'glasses-dev', name: 'glasses-dev' }, { id: 'claude', name: 'Ask Claude', ask: true }, { id: 'grano', name: 'Grano', noApprove: true },
+                   { id: 'procurement', name: 'AFL Procurement', noApprove: true }, { id: 'afl-tracker', name: 'AFL Tracker', noApprove: true },
+                   { id: 'customsez', name: 'CustomsEZ', noApprove: true }, { id: 'ksa-gda', name: 'KSA GDA', noApprove: true }];
 
     var bodyEl = document.getElementById('body'), stateEl = document.getElementById('state'),
         helpEl = document.getElementById('help'), titleEl = document.getElementById('title');
@@ -434,7 +437,7 @@
         railEl.removeChild(pills.pop()); hidden++; m.textContent = '+' + hidden + ' more';
       }
     }
-    var RAIL_NAMES = { grano: 'Grano' };
+    var RAIL_NAMES = { grano: 'Grano', procurement: 'AFL Procurement', 'afl-tracker': 'AFL Tracker', customsez: 'CustomsEZ', 'ksa-gda': 'KSA GDA' };
     function railSession(id) {
       if (railStale()) return null;
       var want = RAIL_NAMES[id] || id, list = (railData && railData.sessions) || [];
@@ -483,6 +486,7 @@
     function bubble(cls, who, text) { var b = el('msg ' + cls); b.appendChild(el('who', who)); b.appendChild(document.createTextNode(text)); return b; }
     function draw() {
       bodyEl.textContent = '';
+      bodyEl.classList.toggle('many', S.mode === 'home' && TARGETS.length + 1 > 6);
       var left = S.until ? Math.max(0, Math.round((S.until - Date.now()) / 60000)) : 0;
       if ((S.mode === 'chat' || S.mode === 'home' || S.mode === 'confirm' || S.mode === 'music') && Date.now() >= S.until) { S.mode = 'pin'; S.session = ''; S.pin = [0, 0, 0, 0]; S.at = 0; S.msg = 'Session ended. Enter your PIN.'; }
       renderRail();
@@ -520,6 +524,7 @@
         if (S.onMusic) mr.classList.add('on');
         mr.appendChild(el('dot')); mr.appendChild(document.createTextNode('Music'));
         mr.appendChild(el('sub', music.on ? 'playing' : 'off')); bodyEl.appendChild(mr);
+        var onRow = bodyEl.querySelector('.row.on'); if (onRow && onRow.scrollIntoView) onRow.scrollIntoView({ block: 'nearest' });   // larger text: keep the chosen row visible
         helpEl.textContent = '▲ ▼ choose · Pinch = open';
         return;
       }
