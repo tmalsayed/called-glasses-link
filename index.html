@@ -91,7 +91,8 @@
     var SALT = 'glasses-devlink-v2', ITER = 200000, NWORDS = 10;
     var TARGETS = [{ id: 'hermes', name: 'hermes' }, { id: 'glasses-dev', name: 'glasses-dev' }, { id: 'claude', name: 'Ask Claude', ask: true }, { id: 'grano', name: 'Grano', noApprove: true },
                    { id: 'procurement', name: 'AFL Procurement', noApprove: true }, { id: 'afl-tracker', name: 'AFL Tracker', noApprove: true },
-                   { id: 'customsez', name: 'CustomsEZ', noApprove: true }, { id: 'ksa-gda', name: 'KSA GDA', noApprove: true }];
+                   { id: 'customsez', name: 'CustomsEZ', noApprove: true }, { id: 'ksa-gda', name: 'KSA GDA', noApprove: true },
+                   { id: 'security', name: 'Security', noApprove: true }, { id: 'italy', name: 'Italy trip', noApprove: true }];
 
     var bodyEl = document.getElementById('body'), stateEl = document.getElementById('state'),
         helpEl = document.getElementById('help'), titleEl = document.getElementById('title');
@@ -437,7 +438,7 @@
         railEl.removeChild(pills.pop()); hidden++; m.textContent = '+' + hidden + ' more';
       }
     }
-    var RAIL_NAMES = { grano: 'Grano', procurement: 'AFL Procurement', 'afl-tracker': 'AFL Tracker', customsez: 'CustomsEZ', 'ksa-gda': 'KSA GDA' };
+    var RAIL_NAMES = { grano: 'Grano', procurement: 'AFL Procurement', 'afl-tracker': 'AFL Tracker', customsez: 'CustomsEZ', 'ksa-gda': 'KSA GDA', security: 'Security', italy: 'Italy trip' };
     function railSession(id) {
       if (railStale()) return null;
       var want = RAIL_NAMES[id] || id, list = (railData && railData.sessions) || [];
