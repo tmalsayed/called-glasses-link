@@ -6,7 +6,7 @@
   <meta name="description" content="Talk to Claude sessions from Meta Ray-Ban Display glasses. Messages are signed on the glasses; replies are encrypted.">
   <meta name="mrbd-web-app-capable" content="yes">
   <meta name="robots" content="noindex, nofollow, noarchive">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://monitor.protaha.com; img-src data:; frame-src https://www.youtube-nocookie.com; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self' https://monitor.protaha.com; img-src data:; frame-src https://www.youtube-nocookie.com; base-uri 'none'; form-action 'none'">
   <title>Glasses Link</title>
   <link rel="icon" href="data:,">
   <style>
@@ -96,6 +96,7 @@
 
     var bodyEl = document.getElementById('body'), stateEl = document.getElementById('state'),
         helpEl = document.getElementById('help'), titleEl = document.getElementById('title');
+    var PAGE_V = '2026-11-25b';   // bump on every publish (glasses-link-publish.sh refuses an unchanged version)
     var enc = new TextEncoder();
     var K = null;                 // { mac, enc } non-extractable CryptoKeys + device token
     var S = { mode: 'boot', words: [], pin: [0, 0, 0, 0], at: 0, session: '', until: 0, target: 0, draft: '', msg: '',
@@ -753,6 +754,24 @@
     }).catch(function () { S.mode = 'pair'; S.msg = 'Storage not available: pairing will not be remembered.'; draw(); });
     setInterval(function () { if (S.mode === 'chat' || S.mode === 'home') poll(); }, 2500);
     setInterval(function () { if (S.mode === 'chat' || S.mode === 'home' || S.mode === 'confirm' || S.mode === 'music') draw(); }, 30000);
+    // Update check (Taha 2026-11-25): the glasses keep old copies of this page. Every 5 min fetch this page fresh;
+    // if its PAGE_V differs, reload under a new address, but only on the home or PIN screen, after 60 s without a key,
+    // with the mic and music off. Nothing else is fetched or run: the new page loads normally (same CSP, same pairing).
+    var lastKey = Date.now(), updateTo = '';
+    document.addEventListener('keydown', function () { lastKey = Date.now(); }, true);
+    function checkUpdate() {
+      fetch(location.pathname + '?u=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.text() : ''; }).then(function (t) {
+        var m = /var PAGE_V = '([0-9a-z-]{1,20})'/.exec(t);
+        if (m && m[1] !== PAGE_V) updateTo = m[1];
+      }).catch(function () {});
+    }
+    setTimeout(checkUpdate, 20000); setInterval(checkUpdate, 300000);
+    setInterval(function () {
+      if (updateTo && (S.mode === 'home' || S.mode === 'pin') && !S.listening && !music.on && Date.now() - lastKey > 60000) {
+        try { if (sessionStorage.getItem('gl-upd-tried') === updateTo) { updateTo = ''; return; } sessionStorage.setItem('gl-upd-tried', updateTo); } catch (e) { updateTo = ''; return; }   // one try per version: never a reload loop
+        location.replace(location.pathname + '?v=' + encodeURIComponent(updateTo));
+      }
+    }, 5000);
   })();
   </script>
 </body>
